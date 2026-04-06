@@ -99,9 +99,6 @@ const AdminCompanySettings = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [roles, setRoles] = useState([]);
-  const [editingAdminId, setEditingAdminId] = useState(null);
-  const [editAdminRoleId, setEditAdminRoleId] = useState("");
-  const [editAdminLoading, setEditAdminLoading] = useState(false);
   const [confirmRemoveAdminId, setConfirmRemoveAdminId] = useState(null);
   const [removeAdminLoading, setRemoveAdminLoading] = useState(false);
   const [forbiddenOrganization, setForbiddenOrganization] = useState(false);
@@ -455,30 +452,8 @@ const AdminCompanySettings = () => {
     }
   };
 
-  const adminRoles = roles.filter((r) => ["organization_owner", "organization_admin"].includes(r.code));
-
-  const handleAdminRoleSubmit = async (e) => {
-    e.preventDefault();
-    if (!companyId || !editingAdminId) return;
-    if (forbiddenMembers || forbiddenRoles) return;
-    const rolePayload = adminRoles.find((r) => r.id === parseInt(editAdminRoleId, 10))?.code ?? editAdminRoleId;
-    if (!rolePayload) return;
-    setEditAdminLoading(true);
-    try {
-      const res = await authFetch(
-        `platform/organizations/${companyId}/members/${editingAdminId}/`,
-        { method: "PATCH", body: JSON.stringify({ role: rolePayload }) }
-      );
-      if (res.ok) {
-        setEditingAdminId(null);
-        loadMembers();
-      }
-    } catch {
-      // ignore
-    } finally {
-      setEditAdminLoading(false);
-    }
-  };
+  // В платформе для компании оставляем только одну роль сотрудника: "Администратор организации".
+  const adminRoles = roles.filter((r) => r.code === "organization_admin");
 
   const handleAdminToggleActive = async (member) => {
     if (!companyId) return;
@@ -778,7 +753,7 @@ const AdminCompanySettings = () => {
           </p>
         ) : membersLoading ? (
           <p className="text-muted text-sm mt-6">Загрузка…</p>
-        ) : members.filter((m) => ["organization_owner", "organization_admin"].includes(m.role_code)).length > 0 ? (
+        ) : members.filter((m) => m.role_code === "organization_admin").length > 0 ? (
           <div className="mt-6">
             <h3 className="text-sm font-medium text-muted mb-2">Текущие администраторы</h3>
             <div className="overflow-x-auto">
@@ -793,7 +768,7 @@ const AdminCompanySettings = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {members.filter((m) => ["organization_owner", "organization_admin"].includes(m.role_code)).map((m) => (
+                  {members.filter((m) => m.role_code === "organization_admin").map((m) => (
                     <tr key={m.id} className="border-b border-border">
                       <td className="px-3 py-2 text-muted">{m.user_phone ?? "—"}</td>
                       <td className="px-3 py-2 text-muted">{m.user_full_name ?? "—"}</td>
@@ -802,17 +777,6 @@ const AdminCompanySettings = () => {
                       <td className="px-3 py-2">
                         {!forbiddenMembers && !forbiddenRoles ? (
                           <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (forbiddenMembers || forbiddenRoles) return;
-                              setEditingAdminId(m.id);
-                              setEditAdminRoleId(m.role_id?.toString() ?? "");
-                            }}
-                            className="text-sm px-2 py-1 rounded border border-border text-muted hover:bg-secondary transition"
-                          >
-                            Изменить роль
-                          </button>
                           <button
                             type="button"
                             onClick={() => handleAdminToggleActive(m)}
@@ -1389,59 +1353,6 @@ const AdminCompanySettings = () => {
           </button>
         </div>
       </section>
-      )}
-
-      {editingAdminId && (
-        <div
-          className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="edit-admin-role-title"
-        >
-          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-5 sm:p-6">
-            <h2 id="edit-admin-role-title" className="text-lg font-medium text-muted mb-4">
-              Изменить роль администратора
-            </h2>
-            <form onSubmit={handleAdminRoleSubmit} className="space-y-4">
-              <div>
-                <label htmlFor="edit-admin-role" className={labelClassName}>
-                  Роль
-                </label>
-                <select
-                  id="edit-admin-role"
-                  value={editAdminRoleId}
-                  onChange={(e) => setEditAdminRoleId(e.target.value)}
-                  className={inputClassName}
-                  required
-                  aria-label="Роль"
-                >
-                  <option value="">Выберите роль</option>
-                  {adminRoles.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name || r.code}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="submit"
-                  disabled={editAdminLoading}
-                  className="px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover transition disabled:opacity-50"
-                >
-                  {editAdminLoading ? "Сохранение…" : "Сохранить"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingAdminId(null)}
-                  className="px-4 py-2.5 border border-border rounded-lg text-muted hover:bg-secondary transition"
-                >
-                  Отмена
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
       )}
 
       {confirmRemoveAdminId && (
