@@ -203,6 +203,32 @@ export const AuthProvider = ({ children }) => {
     return null;
   }, []);
 
+  /**
+   * Восстановление контекста после refresh:
+   * - если пользователь авторизован, но activeContext отсутствует (например, очищен или не был выбран),
+   *   пытаемся подтянуть контексты и при ровно одном доступном контексте выбрать его автоматически.
+   * Это убирает "вылет" на /select-context для пользователей с единственным контекстом.
+   */
+  useEffect(() => {
+    if (!authReady) return;
+    if (!isAuthenticated) return;
+    if (activeContext) return;
+
+    let cancelled = false;
+    fetchContexts().then((data) => {
+      if (cancelled) return;
+      const platform = Boolean(data?.platform);
+      const organizations = Array.isArray(data?.organizations) ? data.organizations : [];
+      const total = (platform ? 1 : 0) + organizations.length;
+      if (total !== 1) return;
+      if (platform) setActiveContext("platform");
+      else if (organizations[0]?.id != null) setActiveContext("organization", organizations[0].id);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, isAuthenticated, activeContext, fetchContexts, setActiveContext]);
+
   /** После загрузки контекстов проверяем: текущий activeContext ещё входит в актуальный список? */
   useEffect(() => {
     if (!availableContexts || !activeContext) return;
