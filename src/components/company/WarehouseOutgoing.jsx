@@ -209,6 +209,7 @@ const WarehouseOutgoing = () => {
   const [manualTotalValue, setManualTotalValue] = useState("");
   const prefillRows = Array.isArray(location.state?.prefillRows) ? location.state.prefillRows : [];
   const prefillItems = Array.isArray(location.state?.prefillItems) ? location.state.prefillItems : [];
+  const isUnmarkedExpenseMode = location.state?.expenseMode === "unmarked";
 
   const loadBase = useCallback(async () => {
     if (!organizationId || !warehouseId) return;
@@ -1042,9 +1043,9 @@ const WarehouseOutgoing = () => {
               const quantityInt = Math.min(MAX_MARKING_SLOTS, Math.max(0, Math.floor(quantity)));
               const markings = resizeMarkingsArray(item.markings, quantityInt);
               const requiresMarking = item.requires_marking !== false;
-              const showUpc = canUseUpc && item.show_upc !== false;
-              const allowPrice = item.allow_price !== false;
-              const identityLocked = isItemFixed || item.lock_identity_fields === true;
+              const showUpc = canUseUpc && !isUnmarkedExpenseMode && item.show_upc !== false;
+              const allowPrice = !isUnmarkedExpenseMode && item.allow_price !== false;
+              const identityLocked = isItemFixed || isUnmarkedExpenseMode || item.lock_identity_fields === true;
               const unitPrice = Math.max(0, Number(item.unit_price) || 0);
               const amountWithoutVat = roundMoney(quantity * unitPrice);
               const vatAmount = vatMode === "with" ? roundMoney((amountWithoutVat * DEFAULT_VAT_RATE_PERCENT) / 100) : 0;

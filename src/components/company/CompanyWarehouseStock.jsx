@@ -467,6 +467,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     navigate(`/app/warehouses/${warehouseId}/outgoing`, {
       state: {
         prefillItems: [prefillItem],
+        expenseMode: "unmarked",
       },
     });
   };
