@@ -71,6 +71,14 @@ const ProtectedRoute = ({ children, requireContext }) => {
     return <Navigate to="/" replace />;
   }
 
+  const shouldWaitForContextResolution =
+    Boolean(requireContext) &&
+    !activeContext &&
+    (checkingContexts || availableContexts === null);
+  if (shouldWaitForContextResolution) {
+    return null;
+  }
+
   if (requireContext === "platform") {
     if (!isDeveloper || activeContext?.type !== "platform") {
       return <Navigate to="/select-context" replace />;
