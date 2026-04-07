@@ -11,6 +11,9 @@ const CompanySettings = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [isReadOnly, setIsReadOnly] = useState(false);
+  const [permissionsLoading, setPermissionsLoading] = useState(true);
+  const [canViewCompany, setCanViewCompany] = useState(false);
+  const [canEditCompany, setCanEditCompany] = useState(false);
 
   const [name, setName] = useState("");
   const [inn, setInn] = useState("");
@@ -81,11 +84,35 @@ const CompanySettings = () => {
 
   const effectiveSubscriptionStatusKey = getEffectiveSubscriptionStatusKey(subscriptionInfo);
 
+  const loadMyPermissions = useCallback(async () => {
+    if (!organizationId) return;
+    setPermissionsLoading(true);
+    try {
+      const res = await authFetch(`platform/organizations/${organizationId}/me/permissions/`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCanViewCompany(false);
+        setCanEditCompany(false);
+        return;
+      }
+      const perms = Array.isArray(data?.permissions) ? data.permissions : [];
+      const canView = perms.includes("company.view");
+      const canEdit = perms.includes("company.edit");
+      setCanViewCompany(canView);
+      setCanEditCompany(canEdit);
+      setIsReadOnly(!canEdit);
+    } catch {
+      setCanViewCompany(false);
+      setCanEditCompany(false);
+    } finally {
+      setPermissionsLoading(false);
+    }
+  }, [organizationId]);
+
   const loadOrganization = useCallback(async () => {
     if (!organizationId) return;
     setLoading(true);
     setError("");
-    setIsReadOnly(false);
     try {
       const res = await authFetch(`platform/organizations/${organizationId}/`);
       const data = await res.json().catch(() => ({}));
@@ -94,7 +121,6 @@ const CompanySettings = () => {
           markForbiddenAppPage?.(organizationId, "company_settings");
           setError("Нет прав.");
           setOrganization(null);
-          setIsReadOnly(true);
           return;
         }
         setError(data.detail ?? "Организация не найдена.");
@@ -120,8 +146,21 @@ const CompanySettings = () => {
   }, [organizationId]);
 
   useEffect(() => {
+    loadMyPermissions();
+  }, [loadMyPermissions]);
+
+  useEffect(() => {
+    if (permissionsLoading) return;
+    if (!organizationId) return;
+    if (!canViewCompany) {
+      markForbiddenAppPage?.(organizationId, "company_settings");
+      setError("Нет прав.");
+      setOrganization(null);
+      setLoading(false);
+      return;
+    }
     loadOrganization();
-  }, [loadOrganization]);
+  }, [permissionsLoading, organizationId, canViewCompany, loadOrganization]);
 
   const handleSaveSubmit = async (e) => {
     e.preventDefault();
@@ -150,7 +189,6 @@ const CompanySettings = () => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (res.status === 403) {
-          markForbiddenAppPage?.(organizationId, "company_settings");
           setIsReadOnly(true);
           setSaveError("Нет прав.");
           setSaveLoading(false);
@@ -373,14 +411,16 @@ const CompanySettings = () => {
             </p>
           ) : null}
 
-          <button
-            type="submit"
-            disabled={saveLoading || isReadOnly}
-            className="px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none transition"
-            aria-label="Сохранить изменения компании"
-          >
-            {saveLoading ? "Сохранение…" : "Сохранить"}
-          </button>
+          {!isReadOnly ? (
+            <button
+              type="submit"
+              disabled={saveLoading}
+              className="px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none transition"
+              aria-label="Сохранить изменения компании"
+            >
+              {saveLoading ? "Сохранение…" : "Сохранить"}
+            </button>
+          ) : null}
         </form>
       </section>
 

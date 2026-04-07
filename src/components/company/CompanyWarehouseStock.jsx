@@ -454,11 +454,14 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       our_name: row.our_name || "",
       ikpu_name: row.ikpu_name || "",
       ikpu_code: row.ikpu_code || "",
-      upc: "",
+      upc: row.upc || "",
       unit: row.unit || "шт",
       quantity: 1,
       unit_price: 0,
       requires_marking: false,
+      show_upc: false,
+      allow_price: false,
+      lock_identity_fields: true,
       markings: [],
     };
     navigate(`/app/warehouses/${warehouseId}/outgoing`, {

@@ -48,6 +48,9 @@ const createEmptyItem = (id) => ({
   unit_price: 0,
   markings: [""],
   requires_marking: true,
+  show_upc: true,
+  allow_price: true,
+  lock_identity_fields: false,
   is_fixed: false,
 });
 
@@ -65,12 +68,15 @@ const normalizePrefillItems = (items) => {
       our_name: String(item?.our_name || "").trim(),
       ikpu_name: String(item?.ikpu_name || "").trim(),
       ikpu_code: String(item?.ikpu_code || "").trim(),
-      upc: requiresMarking ? String(item?.upc || "").trim() : "",
+      upc: String(item?.upc || "").trim(),
       unit: String(item?.unit || "шт").trim() || "шт",
       quantity: qty,
-      unit_price: requiresMarking && Number.isFinite(Number(item?.unit_price)) ? Math.max(0, Number(item.unit_price)) : 0,
+      unit_price: Number.isFinite(Number(item?.unit_price)) ? Math.max(0, Number(item.unit_price)) : 0,
       markings: normalizedMarkings,
       requires_marking: requiresMarking,
+      show_upc: item?.show_upc !== false,
+      allow_price: item?.allow_price !== false,
+      lock_identity_fields: item?.lock_identity_fields === true,
       is_fixed: requiresMarking,
     };
   });
@@ -277,6 +283,9 @@ const WarehouseOutgoing = () => {
             unit_price: Number(line.unit_price ?? 0),
             markings: resizeMarkingsArray(Array.isArray(line.markings) ? line.markings : [], Number(line.quantity ?? 0)),
             requires_marking: Array.isArray(line.markings) && line.markings.some((m) => String(m || "").trim() !== ""),
+            show_upc: true,
+            allow_price: true,
+            lock_identity_fields: false,
             is_fixed: Array.isArray(line.markings) && line.markings.length > 0,
           }))
         );
@@ -602,13 +611,13 @@ const WarehouseOutgoing = () => {
       }
 
       const lines = items.map((item) => ({
-        ...(item.requires_marking === false ? {} : (canUseUpc ? { upc: (item.upc || "").trim() } : {})),
         our_name: item.our_name || "",
         ikpu_name: item.ikpu_name || "",
         ikpu_code: item.ikpu_code || "",
+        ...(canUseUpc ? { upc: (item.upc || "").trim() } : {}),
         unit: item.unit || "шт",
         quantity: Math.max(0, Number(item.quantity) || 0),
-        unit_price: item.requires_marking === false ? 0 : Math.max(0, Number(item.unit_price) || 0),
+        unit_price: Math.max(0, Number(item.unit_price) || 0),
         markings: resizeMarkingsArray(item.markings, item.quantity)
           .map((m) => String(m || "").trim())
           .filter(Boolean),
@@ -1033,6 +1042,9 @@ const WarehouseOutgoing = () => {
               const quantityInt = Math.min(MAX_MARKING_SLOTS, Math.max(0, Math.floor(quantity)));
               const markings = resizeMarkingsArray(item.markings, quantityInt);
               const requiresMarking = item.requires_marking !== false;
+              const showUpc = canUseUpc && item.show_upc !== false;
+              const allowPrice = item.allow_price !== false;
+              const identityLocked = isItemFixed || item.lock_identity_fields === true;
               const unitPrice = Math.max(0, Number(item.unit_price) || 0);
               const amountWithoutVat = roundMoney(quantity * unitPrice);
               const vatAmount = vatMode === "with" ? roundMoney((amountWithoutVat * DEFAULT_VAT_RATE_PERCENT) / 100) : 0;
@@ -1071,7 +1083,7 @@ const WarehouseOutgoing = () => {
                           type="text"
                           value={item.our_name}
                           onChange={(e) => handleChangeItem(item.id, { our_name: e.target.value })}
-                          disabled={isItemFixed}
+                          disabled={identityLocked}
                           className={DOC_INPUT}
                           placeholder="—"
                           aria-label="Наше наименование товара"
@@ -1088,7 +1100,7 @@ const WarehouseOutgoing = () => {
                           type="text"
                           value={item.ikpu_name}
                           onChange={(e) => handleChangeItem(item.id, { ikpu_name: e.target.value })}
-                          disabled={isItemFixed}
+                          disabled={identityLocked}
                           className={DOC_INPUT}
                           placeholder="—"
                           aria-label="Наименование по ИКПУ"
@@ -1106,14 +1118,14 @@ const WarehouseOutgoing = () => {
                           inputMode="numeric"
                           value={item.ikpu_code}
                           onChange={(e) => handleChangeItem(item.id, { ikpu_code: e.target.value })}
-                          disabled={isItemFixed}
+                          disabled={identityLocked}
                           className={`${DOC_INPUT} font-mono text-[13px]`}
                           placeholder="17 цифр или пусто"
                           aria-label="ИКПУ товара"
                         />
                       </div>
                     </div>
-                    {canUseUpc && requiresMarking ? (
+                    {showUpc ? (
                       <div className={DOC_ROW_GRID}>
                         <label htmlFor={`outgoing-upc-${item.id}`} className={DOC_LABEL_CELL}>
                           UPC
@@ -1124,7 +1136,7 @@ const WarehouseOutgoing = () => {
                             type="text"
                             value={item.upc}
                             onChange={(e) => handleChangeItem(item.id, { upc: e.target.value })}
-                            disabled={isItemFixed}
+                            disabled={identityLocked}
                             className={`${DOC_INPUT} font-mono text-[13px]`}
                             placeholder="Например: 012345678905"
                             aria-label="UPC товара"
@@ -1136,7 +1148,7 @@ const WarehouseOutgoing = () => {
 
                   <div className="p-3 sm:p-4 space-y-3">
                     {vatMode === "without" ? (
-                      <div className={`grid grid-cols-2 ${requiresMarking ? "sm:grid-cols-4" : "sm:grid-cols-3"} gap-3 sm:gap-4`}>
+                      <div className={`grid grid-cols-2 ${allowPrice ? "sm:grid-cols-4" : "sm:grid-cols-3"} gap-3 sm:gap-4`}>
                         <div>
                           <label htmlFor={`outgoing-unit-${item.id}`} className={ITEM_FIELD_LABEL}>
                             Ед. изм.
@@ -1167,7 +1179,7 @@ const WarehouseOutgoing = () => {
                             aria-label="Количество единиц"
                           />
                         </div>
-                        {requiresMarking ? (
+                        {allowPrice ? (
                           <div>
                             <label htmlFor={`outgoing-price-${item.id}`} className={ITEM_FIELD_LABEL}>
                               Цена за ед.
@@ -1191,7 +1203,7 @@ const WarehouseOutgoing = () => {
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        <div className={`grid grid-cols-2 ${requiresMarking ? "sm:grid-cols-4" : "sm:grid-cols-3"} gap-3 sm:gap-4`}>
+                        <div className={`grid grid-cols-2 ${allowPrice ? "sm:grid-cols-4" : "sm:grid-cols-3"} gap-3 sm:gap-4`}>
                           <div>
                             <label htmlFor={`outgoing-unit-${item.id}`} className={ITEM_FIELD_LABEL}>
                               Ед. изм.
@@ -1222,7 +1234,7 @@ const WarehouseOutgoing = () => {
                               aria-label="Количество единиц"
                             />
                           </div>
-                          {requiresMarking ? (
+                          {allowPrice ? (
                             <div>
                               <label htmlFor={`outgoing-price-${item.id}`} className={ITEM_FIELD_LABEL}>
                                 Цена за ед.
