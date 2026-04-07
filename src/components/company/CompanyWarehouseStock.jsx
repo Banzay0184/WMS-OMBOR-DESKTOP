@@ -91,7 +91,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(25);
+  const [pageSize] = useState(10);
   const [unmarkedRows, setUnmarkedRows] = useState([]);
   const [unmarkedTotalCount, setUnmarkedTotalCount] = useState(0);
   const [unmarkedFilteredCount, setUnmarkedFilteredCount] = useState(0);
@@ -478,7 +478,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
 
   const titleName = warehouseLoading ? "…" : warehouseName || `Склад #${warehouseId}`;
   const totalPages = Math.max(1, Math.ceil(Math.max(filteredCount, 1) / pageSize));
-  const showPagination = filteredCount > pageSize;
+  const showPagination = filteredCount > 0;
   const unmarkedTotalPages = Math.max(1, Math.ceil(Math.max(unmarkedFilteredCount, 1) / unmarkedPageSize));
   const showUnmarkedPagination = unmarkedFilteredCount > unmarkedPageSize;
 
@@ -493,7 +493,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
 
   return (
     <div className="space-y-6 max-w-6xl">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="space-y-3">
         <div>
           <Link to="/app/warehouses" className="text-sm font-medium text-primary hover:underline">
             ← Склады компании
