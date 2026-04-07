@@ -43,8 +43,17 @@ const loadActiveContextFromStorage = () => {
     const ctx = JSON.parse(raw);
     if (!ctx || typeof ctx !== "object") return null;
     if (ctx.type === "platform") return { type: "platform" };
-    if (ctx.type === "organization" && typeof ctx.organizationId === "number") {
-      return { type: "organization", organizationId: ctx.organizationId };
+    if (ctx.type === "organization") {
+      const rawId = ctx.organizationId;
+      const normalizedId =
+        typeof rawId === "number"
+          ? rawId
+          : typeof rawId === "string" && rawId.trim() !== "" && !Number.isNaN(Number(rawId))
+            ? Number(rawId)
+            : null;
+      if (typeof normalizedId === "number" && Number.isFinite(normalizedId)) {
+        return { type: "organization", organizationId: normalizedId };
+      }
     }
     return null;
   } catch {
@@ -87,10 +96,14 @@ export const AuthProvider = ({ children }) => {
 
   /** Установить активный контекст и сохранить в localStorage. */
   const setActiveContext = useCallback((type, organizationId = null) => {
+    const normalizedOrganizationId =
+      type === "organization" && organizationId != null && organizationId !== ""
+        ? Number(organizationId)
+        : null;
     const next =
       type === "platform"
         ? { type: "platform" }
-        : { type: "organization", organizationId };
+        : { type: "organization", organizationId: normalizedOrganizationId };
     setActiveContextState(next);
     try {
       localStorage.setItem(STORAGE_KEYS.activeContext, JSON.stringify(next));
