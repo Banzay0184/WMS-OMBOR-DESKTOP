@@ -47,6 +47,7 @@ const createEmptyItem = (id) => ({
   quantity: 1,
   unit_price: 0,
   markings: [""],
+  requires_marking: true,
   is_fixed: false,
 });
 
@@ -64,7 +65,6 @@ const normalizePrefillRowsToItems = (rows) => {
   const grouped = new Map();
   rows.forEach((row) => {
     const markingCode = String(row?.marking_code || "").trim();
-    if (!markingCode) return;
     const ourName = String(row?.our_name || "").trim();
     const ikpuName = String(row?.ikpu_name || "").trim();
     const ikpuCode = String(row?.ikpu_code || "").trim();
@@ -73,15 +73,39 @@ const normalizePrefillRowsToItems = (rows) => {
     const invoiceId = Number(row?.invoice_id);
     const lineId = Number(row?.line_id);
     const hasSourceLine = Number.isFinite(invoiceId) && Number.isFinite(lineId);
-    const key = hasSourceLine
-      ? `source:${invoiceId}|${lineId}`
-      : `fallback:${[ourName, ikpuName, ikpuCode, upc, unit].join("|")}`;
-    const existing = grouped.get(key);
-    if (existing) {
-      existing.markings.push(markingCode);
+    if (markingCode) {
+      const key = hasSourceLine
+        ? `source:${invoiceId}|${lineId}`
+        : `fallback:${[ourName, ikpuName, ikpuCode, upc, unit].join("|")}`;
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.markings.push(markingCode);
+        return;
+      }
+      grouped.set(key, {
+        requires_marking: true,
+        our_name: ourName,
+        ikpu_name: ikpuName,
+        ikpu_code: ikpuCode,
+        upc,
+        unit,
+        unit_price: Number.isFinite(Number(row?.unit_price))
+          ? Math.max(0, Number(row.unit_price))
+          : 0,
+        markings: [markingCode],
+      });
       return;
     }
-    grouped.set(key, {
+
+    const prefillQuantity = Math.max(1, Math.floor(Number(row?.prefill_quantity ?? row?.quantity ?? 1)) || 1);
+    const fallbackKey = `unmarked:${[ourName, ikpuName, ikpuCode, upc, unit].join("|")}`;
+    const existingUnmarked = grouped.get(fallbackKey);
+    if (existingUnmarked) {
+      existingUnmarked.quantity += prefillQuantity;
+      return;
+    }
+    grouped.set(fallbackKey, {
+      requires_marking: false,
       our_name: ourName,
       ikpu_name: ikpuName,
       ikpu_code: ikpuCode,
@@ -90,7 +114,8 @@ const normalizePrefillRowsToItems = (rows) => {
       unit_price: Number.isFinite(Number(row?.unit_price))
         ? Math.max(0, Number(row.unit_price))
         : 0,
-      markings: [markingCode],
+      quantity: prefillQuantity,
+      markings: [],
     });
   });
 
@@ -101,10 +126,13 @@ const normalizePrefillRowsToItems = (rows) => {
     ikpu_code: group.ikpu_code,
     upc: group.upc,
     unit: group.unit,
-    quantity: group.markings.length,
+    quantity: group.requires_marking ? group.markings.length : Math.max(1, Number(group.quantity) || 1),
     unit_price: group.unit_price,
-    markings: resizeMarkingsArray(group.markings, group.markings.length),
-    is_fixed: true,
+    markings: group.requires_marking
+      ? resizeMarkingsArray(group.markings, group.markings.length)
+      : resizeMarkingsArray([], Math.max(1, Number(group.quantity) || 1)),
+    requires_marking: group.requires_marking !== false,
+    is_fixed: group.requires_marking === true,
   }));
 
   if (items.length > 0) return items;
@@ -221,6 +249,7 @@ const WarehouseOutgoing = () => {
             quantity: Number(line.quantity ?? 0),
             unit_price: Number(line.unit_price ?? 0),
             markings: resizeMarkingsArray(Array.isArray(line.markings) ? line.markings : [], Number(line.quantity ?? 0)),
+            requires_marking: Array.isArray(line.markings) && line.markings.some((m) => String(m || "").trim() !== ""),
             is_fixed: Array.isArray(line.markings) && line.markings.length > 0,
           }))
         );
@@ -971,6 +1000,7 @@ const WarehouseOutgoing = () => {
               const quantity = Math.max(0, Number(item.quantity) || 0);
               const quantityInt = Math.min(MAX_MARKING_SLOTS, Math.max(0, Math.floor(quantity)));
               const markings = resizeMarkingsArray(item.markings, quantityInt);
+              const requiresMarking = item.requires_marking !== false;
               const unitPrice = Math.max(0, Number(item.unit_price) || 0);
               const amountWithoutVat = roundMoney(quantity * unitPrice);
               const vatAmount = vatMode === "with" ? roundMoney((amountWithoutVat * DEFAULT_VAT_RATE_PERCENT) / 100) : 0;
@@ -1197,36 +1227,44 @@ const WarehouseOutgoing = () => {
                       </div>
                     )}
 
-                    <div className="mt-3 pt-3 border-t border-border/60 bg-secondary/30 -mx-3 sm:-mx-4 px-3 sm:px-4 pb-2 rounded-b-xl">
-                      <p className="block text-sm font-semibold text-muted mb-2">
-                        Маркировки по единицам
-                      </p>
-                      {quantityInt <= 0 ? (
-                        <p className="text-sm text-muted/70">
-                          Сначала укажите количество, затем появятся отдельные поля маркировки.
+                    {requiresMarking ? (
+                      <div className="mt-3 pt-3 border-t border-border/60 bg-secondary/30 -mx-3 sm:-mx-4 px-3 sm:px-4 pb-2 rounded-b-xl">
+                        <p className="block text-sm font-semibold text-muted mb-2">
+                          Маркировки по единицам
                         </p>
-                      ) : (
-                        <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 ${quantityInt > 18 ? "max-h-64 overflow-y-auto pr-1 -mr-1" : ""}`}>
-                          {markings.map((code, mi) => (
-                            <label key={`${item.id}-marking-${mi}`} className="flex flex-col gap-1 min-w-0">
-                              <span className="text-xs font-semibold text-muted/70 uppercase tracking-wide">
-                                Ед. {mi + 1} из {quantityInt}
-                              </span>
-                              <input
-                                type="text"
-                                value={code}
-                                onChange={(e) => handleMarkingChange(item.id, mi, e.target.value)}
-                                disabled={isItemFixed}
-                                className={`${ITEM_FIELD_INPUT} font-mono text-[13px]`}
-                                placeholder="Код маркировки"
-                                autoComplete="off"
-                                aria-label={`Маркировка единицы ${mi + 1} из ${quantityInt} для позиции ${idx + 1}`}
-                              />
-                            </label>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                        {quantityInt <= 0 ? (
+                          <p className="text-sm text-muted/70">
+                            Сначала укажите количество, затем появятся отдельные поля маркировки.
+                          </p>
+                        ) : (
+                          <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 ${quantityInt > 18 ? "max-h-64 overflow-y-auto pr-1 -mr-1" : ""}`}>
+                            {markings.map((code, mi) => (
+                              <label key={`${item.id}-marking-${mi}`} className="flex flex-col gap-1 min-w-0">
+                                <span className="text-xs font-semibold text-muted/70 uppercase tracking-wide">
+                                  Ед. {mi + 1} из {quantityInt}
+                                </span>
+                                <input
+                                  type="text"
+                                  value={code}
+                                  onChange={(e) => handleMarkingChange(item.id, mi, e.target.value)}
+                                  disabled={isItemFixed}
+                                  className={`${ITEM_FIELD_INPUT} font-mono text-[13px]`}
+                                  placeholder="Код маркировки"
+                                  autoComplete="off"
+                                  aria-label={`Маркировка единицы ${mi + 1} из ${quantityInt} для позиции ${idx + 1}`}
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mt-3 pt-3 border-t border-border/60 bg-secondary/30 -mx-3 sm:-mx-4 px-3 sm:px-4 pb-2 rounded-b-xl">
+                        <p className="text-sm text-muted/75">
+                          Товар без маркировки: расход выполняется по количеству.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               );

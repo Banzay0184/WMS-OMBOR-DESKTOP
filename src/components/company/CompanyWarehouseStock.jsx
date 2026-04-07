@@ -448,6 +448,24 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     });
   };
 
+  const handleOpenUnmarkedExpense = (row) => {
+    if (!row) return;
+    const payloadRow = {
+      our_name: row.our_name || "",
+      ikpu_name: row.ikpu_name || "",
+      ikpu_code: row.ikpu_code || "",
+      upc: row.upc || "",
+      unit: row.unit || "шт",
+      unit_price: 0,
+      prefill_quantity: 1,
+    };
+    navigate(`/app/warehouses/${warehouseId}/outgoing`, {
+      state: {
+        prefillRows: [payloadRow],
+      },
+    });
+  };
+
   const handleConfirmDelete = async () => {
     const url = markingDetailUrl(deleteRow);
     if (!url || !organizationId) return;
@@ -792,6 +810,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                   {canUseUpc ? <th className="py-2.5 px-3">UPC</th> : null}
                   <th className="py-2.5 px-3">Ед. изм.</th>
                   <th className="py-2.5 px-3 text-right">Остаток</th>
+                  <th className="py-2.5 px-3 text-right">Действия</th>
                 </tr>
               </thead>
               <tbody>
@@ -815,6 +834,16 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                       ) : null}
                       <td className="py-2 px-3 align-top">{row.unit || "шт"}</td>
                       <td className="py-2 px-3 align-top text-right font-semibold">{row.quantity ?? 0}</td>
+                      <td className="py-2 px-3 align-top text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenUnmarkedExpense(row)}
+                          className="px-3 py-1.5 text-xs font-medium rounded-lg border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                          aria-label={`Сделать расход по товару ${name}`}
+                        >
+                          Расход
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
