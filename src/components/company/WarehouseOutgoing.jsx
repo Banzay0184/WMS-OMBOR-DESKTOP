@@ -51,6 +51,32 @@ const createEmptyItem = (id) => ({
   is_fixed: false,
 });
 
+const normalizePrefillItems = (items) => {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const normalized = items.map((item, index) => {
+    const qty = Math.max(1, Math.floor(Number(item?.quantity ?? 1)) || 1);
+    const requiresMarking = item?.requires_marking !== false;
+    const incomingMarkings = Array.isArray(item?.markings) ? item.markings : [];
+    const normalizedMarkings = requiresMarking
+      ? resizeMarkingsArray(incomingMarkings, qty)
+      : resizeMarkingsArray([], qty);
+    return {
+      id: `prefill-item-${index + 1}`,
+      our_name: String(item?.our_name || "").trim(),
+      ikpu_name: String(item?.ikpu_name || "").trim(),
+      ikpu_code: String(item?.ikpu_code || "").trim(),
+      upc: String(item?.upc || "").trim(),
+      unit: String(item?.unit || "шт").trim() || "шт",
+      quantity: qty,
+      unit_price: Number.isFinite(Number(item?.unit_price)) ? Math.max(0, Number(item.unit_price)) : 0,
+      markings: normalizedMarkings,
+      requires_marking: requiresMarking,
+      is_fixed: requiresMarking,
+    };
+  });
+  return normalized.length > 0 ? normalized : [createEmptyItem("row-1")];
+};
+
 const resizeMarkingsArray = (markings, targetLength) => {
   const prev = Array.isArray(markings) ? markings : [];
   const len = Math.max(0, Math.min(MAX_MARKING_SLOTS, Math.floor(Number(targetLength)) || 0));
@@ -176,6 +202,7 @@ const WarehouseOutgoing = () => {
   const [manualTotalEnabled, setManualTotalEnabled] = useState(false);
   const [manualTotalValue, setManualTotalValue] = useState("");
   const prefillRows = Array.isArray(location.state?.prefillRows) ? location.state.prefillRows : [];
+  const prefillItems = Array.isArray(location.state?.prefillItems) ? location.state.prefillItems : [];
 
   const loadBase = useCallback(async () => {
     if (!organizationId || !warehouseId) return;
@@ -290,7 +317,12 @@ const WarehouseOutgoing = () => {
   }, [loadPartners]);
 
   useEffect(() => {
-    if (outgoingInvoiceId || prefillRows.length === 0 || !organizationId) return;
+    if (outgoingInvoiceId || prefillItems.length === 0) return;
+    setItems(normalizePrefillItems(prefillItems));
+  }, [outgoingInvoiceId, prefillItems]);
+
+  useEffect(() => {
+    if (outgoingInvoiceId || prefillRows.length === 0 || prefillItems.length > 0 || !organizationId) return;
     let cancelled = false;
     const loadPrefilledItems = async () => {
       const uniqueInvoiceIds = [...new Set(prefillRows.map((row) => Number(row?.invoice_id)).filter((id) => Number.isFinite(id)))];
@@ -336,7 +368,7 @@ const WarehouseOutgoing = () => {
     return () => {
       cancelled = true;
     };
-  }, [outgoingInvoiceId, prefillRows, organizationId]);
+  }, [outgoingInvoiceId, prefillRows, prefillItems.length, organizationId]);
 
   useEffect(() => {
     if (canUseUpc) return;

@@ -450,18 +450,20 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
 
   const handleOpenUnmarkedExpense = (row) => {
     if (!row) return;
-    const payloadRow = {
+    const prefillItem = {
       our_name: row.our_name || "",
       ikpu_name: row.ikpu_name || "",
       ikpu_code: row.ikpu_code || "",
       upc: row.upc || "",
       unit: row.unit || "шт",
+      quantity: 1,
       unit_price: 0,
-      prefill_quantity: 1,
+      requires_marking: false,
+      markings: [],
     };
     navigate(`/app/warehouses/${warehouseId}/outgoing`, {
       state: {
-        prefillRows: [payloadRow],
+        prefillItems: [prefillItem],
       },
     });
   };
