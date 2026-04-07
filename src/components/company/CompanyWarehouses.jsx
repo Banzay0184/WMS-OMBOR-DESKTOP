@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { authFetch } from "../../api/client";
 
+const PAGE_SIZE = 10;
+
 const CompanyWarehouses = () => {
   const { activeContext, markForbiddenAppPage } = useAuth();
   const organizationId = activeContext?.type === "organization" ? activeContext.organizationId : null;
@@ -15,6 +17,7 @@ const CompanyWarehouses = () => {
   const [isActive, setIsActive] = useState(true);
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const loadWarehouses = useCallback(async () => {
     if (!organizationId) return;
@@ -35,6 +38,7 @@ const CompanyWarehouses = () => {
         return;
       }
       setWarehouses(Array.isArray(data) ? data : []);
+      setCurrentPage(1);
     } catch (err) {
       setError(err.message ?? "Ошибка сети");
       setWarehouses([]);
@@ -82,6 +86,17 @@ const CompanyWarehouses = () => {
   const inputClassName =
     "w-full px-4 py-2.5 rounded-lg border border-border bg-white text-muted placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition";
   const labelClassName = "block text-sm font-medium text-muted mb-1.5";
+  const totalPages = Math.max(1, Math.ceil(warehouses.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * PAGE_SIZE;
+  const endIndex = startIndex + PAGE_SIZE;
+  const pagedWarehouses = warehouses.slice(startIndex, endIndex);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   if (!organizationId) {
     return (
@@ -137,7 +152,7 @@ const CompanyWarehouses = () => {
                 </tr>
               </thead>
               <tbody>
-                {warehouses.map((wh) => (
+                {pagedWarehouses.map((wh) => (
                   <tr key={wh.id} className="border-b border-border hover:bg-secondary/30 transition-colors">
                     <td className="px-4 py-3 text-muted">{wh.name ?? "—"}</td>
                     <td className="px-4 py-3 text-muted">{wh.address ?? "—"}</td>
@@ -158,6 +173,36 @@ const CompanyWarehouses = () => {
               </tbody>
             </table>
           </div>
+          {warehouses.length > PAGE_SIZE ? (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-white">
+              <p className="text-sm text-muted">
+                Показано {startIndex + 1}-{Math.min(endIndex, warehouses.length)} из {warehouses.length}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={safePage === 1}
+                  className="px-3 py-2 rounded-lg border border-border text-muted hover:bg-secondary transition disabled:opacity-50 disabled:pointer-events-none"
+                  aria-label="Предыдущая страница складов"
+                >
+                  Назад
+                </button>
+                <span className="text-sm text-muted">
+                  {safePage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={safePage >= totalPages}
+                  className="px-3 py-2 rounded-lg border border-border text-muted hover:bg-secondary transition disabled:opacity-50 disabled:pointer-events-none"
+                  aria-label="Следующая страница складов"
+                >
+                  Вперёд
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
 

@@ -92,6 +92,15 @@ const CompanyWarehouseStock = () => {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize] = useState(25);
+  const [unmarkedRows, setUnmarkedRows] = useState([]);
+  const [unmarkedTotalCount, setUnmarkedTotalCount] = useState(0);
+  const [unmarkedFilteredCount, setUnmarkedFilteredCount] = useState(0);
+  const [unmarkedLoading, setUnmarkedLoading] = useState(true);
+  const [unmarkedError, setUnmarkedError] = useState("");
+  const [unmarkedSearch, setUnmarkedSearch] = useState("");
+  const [unmarkedDebouncedSearch, setUnmarkedDebouncedSearch] = useState("");
+  const [unmarkedPage, setUnmarkedPage] = useState(1);
+  const [unmarkedPageSize] = useState(25);
   const [canUseUpc, setCanUseUpc] = useState(false);
 
   const [editOpen, setEditOpen] = useState(false);
@@ -176,6 +185,10 @@ const CompanyWarehouseStock = () => {
     const t = setTimeout(() => setDebouncedSearch(search), 400);
     return () => clearTimeout(t);
   }, [search]);
+  useEffect(() => {
+    const t = setTimeout(() => setUnmarkedDebouncedSearch(unmarkedSearch), 400);
+    return () => clearTimeout(t);
+  }, [unmarkedSearch]);
 
   useEffect(() => {
     void loadWarehouse();
@@ -206,11 +219,69 @@ const CompanyWarehouseStock = () => {
     void loadMarkingUnits();
   }, [loadMarkingUnits]);
 
+  const loadUnmarkedStock = useCallback(async () => {
+    if (!organizationId || !warehouseId) return;
+    setUnmarkedLoading(true);
+    setUnmarkedError("");
+    try {
+      const params = new URLSearchParams();
+      params.set("page", String(unmarkedPage));
+      params.set("page_size", String(unmarkedPageSize));
+      if (unmarkedDebouncedSearch.trim()) params.set("search", unmarkedDebouncedSearch.trim());
+
+      const res = await authFetch(
+        `platform/organizations/${organizationId}/warehouses/${warehouseId}/unmarked-stock/?${params.toString()}`
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 403) {
+          markForbiddenAppPage?.(organizationId, "warehouses");
+          setUnmarkedError("Нет доступа.");
+          setUnmarkedRows([]);
+          setUnmarkedTotalCount(0);
+          setUnmarkedFilteredCount(0);
+          return;
+        }
+        setUnmarkedError(typeof data.detail === "string" ? data.detail : "Ошибка загрузки");
+        setUnmarkedRows([]);
+        setUnmarkedTotalCount(0);
+        setUnmarkedFilteredCount(0);
+        return;
+      }
+      setUnmarkedRows(Array.isArray(data.results) ? data.results : []);
+      setUnmarkedTotalCount(typeof data.total_count === "number" ? data.total_count : 0);
+      setUnmarkedFilteredCount(typeof data.count === "number" ? data.count : 0);
+    } catch (err) {
+      setUnmarkedError(err.message ?? "Ошибка сети");
+      setUnmarkedRows([]);
+      setUnmarkedTotalCount(0);
+      setUnmarkedFilteredCount(0);
+    } finally {
+      setUnmarkedLoading(false);
+    }
+  }, [
+    organizationId,
+    warehouseId,
+    unmarkedPage,
+    unmarkedPageSize,
+    unmarkedDebouncedSearch,
+    markForbiddenAppPage,
+  ]);
+
+  useEffect(() => {
+    void loadUnmarkedStock();
+  }, [loadUnmarkedStock]);
+
   useEffect(() => {
     if (filteredCount <= 0) return;
     const tp = Math.max(1, Math.ceil(filteredCount / pageSize));
     if (page > tp) setPage(tp);
   }, [filteredCount, page, pageSize]);
+  useEffect(() => {
+    if (unmarkedFilteredCount <= 0) return;
+    const tp = Math.max(1, Math.ceil(unmarkedFilteredCount / unmarkedPageSize));
+    if (unmarkedPage > tp) setUnmarkedPage(tp);
+  }, [unmarkedFilteredCount, unmarkedPage, unmarkedPageSize]);
 
   useEffect(() => {
     if (rows.length === 0) return;
@@ -408,10 +479,16 @@ const CompanyWarehouseStock = () => {
   const titleName = warehouseLoading ? "…" : warehouseName || `Склад #${warehouseId}`;
   const totalPages = Math.max(1, Math.ceil(Math.max(filteredCount, 1) / pageSize));
   const showPagination = filteredCount > pageSize;
+  const unmarkedTotalPages = Math.max(1, Math.ceil(Math.max(unmarkedFilteredCount, 1) / unmarkedPageSize));
+  const showUnmarkedPagination = unmarkedFilteredCount > unmarkedPageSize;
 
   const handleSearchChange = (e) => {
     setPage(1);
     setSearch(e.target.value);
+  };
+  const handleUnmarkedSearchChange = (e) => {
+    setUnmarkedPage(1);
+    setUnmarkedSearch(e.target.value);
   };
 
   return (
@@ -626,6 +703,115 @@ const CompanyWarehouseStock = () => {
                 onClick={() => setPage((p) => p + 1)}
                 className="px-3 py-1.5 text-sm rounded-lg border border-border bg-white disabled:opacity-40"
                 aria-label="Следующая страница"
+              >
+                Вперёд
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="rounded-xl border border-border bg-white p-4 shadow-soft space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-muted">Товары без маркировки</h2>
+            <p className="text-sm text-muted/75 mt-1">
+              Здесь показываются остатки по позициям без кодов маркировки: приход − расход.
+            </p>
+          </div>
+          <div className="w-full sm:w-auto min-w-[220px]">
+            <label htmlFor="wh-unmarked-search" className="block text-xs font-medium text-muted/80 mb-1">
+              Поиск по наименованию, ИКПУ{canUseUpc ? ", UPC" : ""}
+            </label>
+            <input
+              id="wh-unmarked-search"
+              type="search"
+              value={unmarkedSearch}
+              onChange={handleUnmarkedSearchChange}
+              placeholder={canUseUpc ? "Наименование, ИКПУ, UPC…" : "Наименование, ИКПУ…"}
+              className={INPUT_CLASS}
+              aria-label={canUseUpc ? "Поиск товаров без маркировки по наименованию, ИКПУ или UPC" : "Поиск товаров без маркировки по наименованию или ИКПУ"}
+              autoComplete="off"
+            />
+          </div>
+        </div>
+
+        {unmarkedError ? (
+          <p className="text-sm text-red-800 bg-red-50/80 border border-red-200/70 rounded-lg px-4 py-2.5" role="alert">
+            {unmarkedError}
+          </p>
+        ) : null}
+
+        {unmarkedLoading ? (
+          <p className="text-sm text-muted/75 py-6">Загрузка…</p>
+        ) : unmarkedTotalCount === 0 ? (
+          <p className="text-sm text-muted/75 py-6">Нет остатков товаров без маркировки.</p>
+        ) : unmarkedFilteredCount === 0 ? (
+          <p className="text-sm text-muted/75 py-6">Ничего не найдено по запросу.</p>
+        ) : (
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-xs font-semibold text-muted/70 bg-neutral-50/90">
+                  <th className="py-2.5 px-3 w-[88px]">Фото</th>
+                  <th className="py-2.5 px-3">Наименование</th>
+                  <th className="py-2.5 px-3">ИКПУ</th>
+                  {canUseUpc ? <th className="py-2.5 px-3">UPC</th> : null}
+                  <th className="py-2.5 px-3">Ед. изм.</th>
+                  <th className="py-2.5 px-3 text-right">Остаток</th>
+                </tr>
+              </thead>
+              <tbody>
+                {unmarkedRows.map((row, idx) => {
+                  const name = row.our_name?.trim() || row.ikpu_name?.trim() || "—";
+                  const key = `${row.catalog_product_id || "raw"}-${row.ikpu_code || ""}-${row.upc || ""}-${idx}`;
+                  return (
+                    <tr key={key} className="border-b border-border/60 hover:bg-secondary/40">
+                      <td className="py-2 px-3 align-middle">
+                        <ProductPhotoCell url={row.product_image_url} label={name} />
+                      </td>
+                      <td className="py-2 px-3 align-top max-w-[16rem]">
+                        <span className="font-medium text-muted">{name}</span>
+                        {row.ikpu_name && row.our_name ? (
+                          <span className="block text-xs text-muted/70 mt-0.5">{row.ikpu_name}</span>
+                        ) : null}
+                      </td>
+                      <td className="py-2 px-3 font-mono text-xs align-top">{row.ikpu_code || "—"}</td>
+                      {canUseUpc ? (
+                        <td className="py-2 px-3 font-mono text-xs align-top">{row.upc || "—"}</td>
+                      ) : null}
+                      <td className="py-2 px-3 align-top">{row.unit || "шт"}</td>
+                      <td className="py-2 px-3 align-top text-right font-semibold">{row.quantity ?? 0}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {showUnmarkedPagination && !unmarkedLoading && unmarkedTotalCount > 0 && unmarkedFilteredCount > 0 ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/60">
+            <p className="text-xs text-muted/70">
+              {unmarkedDebouncedSearch.trim() ? `Найдено: ${unmarkedFilteredCount} · ` : ""}
+              страница {unmarkedPage} из {unmarkedTotalPages}
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={unmarkedPage <= 1}
+                onClick={() => setUnmarkedPage((p) => Math.max(1, p - 1))}
+                className="px-3 py-1.5 text-sm rounded-lg border border-border bg-white disabled:opacity-40"
+                aria-label="Предыдущая страница товаров без маркировки"
+              >
+                Назад
+              </button>
+              <button
+                type="button"
+                disabled={unmarkedPage >= unmarkedTotalPages}
+                onClick={() => setUnmarkedPage((p) => p + 1)}
+                className="px-3 py-1.5 text-sm rounded-lg border border-border bg-white disabled:opacity-40"
+                aria-label="Следующая страница товаров без маркировки"
               >
                 Вперёд
               </button>
