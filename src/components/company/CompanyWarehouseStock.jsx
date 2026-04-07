@@ -454,7 +454,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       our_name: row.our_name || "",
       ikpu_name: row.ikpu_name || "",
       ikpu_code: row.ikpu_code || "",
-      upc: row.upc || "",
+      upc: "",
       unit: row.unit || "шт",
       quantity: 1,
       unit_price: 0,
