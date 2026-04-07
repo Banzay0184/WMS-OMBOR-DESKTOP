@@ -75,7 +75,7 @@ const ProductPhotoCell = ({ url, label }) => {
   );
 };
 
-const CompanyWarehouseStock = () => {
+const CompanyWarehouseStock = ({ section = "marked" }) => {
   const navigate = useNavigate();
   const { warehouseId } = useParams();
   const { activeContext, markForbiddenAppPage } = useAuth();
@@ -499,10 +499,16 @@ const CompanyWarehouseStock = () => {
             ← Склады компании
           </Link>
           <h1 className="text-xl font-semibold text-muted tracking-tight mt-2">{titleName}</h1>
-          <p className="text-sm text-muted/75 mt-1">
-            Маркировки из утверждённых приходов: одна строка — один код. Отметьте позиции и нажмите «Расход»,
-            чтобы открыть расходную счёт‑фактуру с готовыми товарами и выбранными маркировками.
-          </p>
+          {section === "marked" ? (
+            <p className="text-sm text-muted/75 mt-1">
+              Маркировки из утверждённых приходов: одна строка — один код. Отметьте позиции и нажмите «Расход»,
+              чтобы открыть расходную счёт‑фактуру с готовыми товарами и выбранными маркировками.
+            </p>
+          ) : (
+            <p className="text-sm text-muted/75 mt-1">
+              Остатки товаров без маркировки: приход минус расход по количеству.
+            </p>
+          )}
           {!rowsLoading && rows.length === 0 && totalCount === 0 ? null : (
             <p className="text-sm font-medium text-muted mt-2" aria-live="polite">
               Всего единиц учёта на складе: {rowsLoading ? "…" : totalCount}
@@ -515,8 +521,33 @@ const CompanyWarehouseStock = () => {
             </p>
           )}
         </div>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            to={`/app/warehouses/${warehouseId}/marked`}
+            className={`px-3 py-2 rounded-lg border text-sm transition ${
+              section === "marked"
+                ? "border-primary bg-primary text-white"
+                : "border-border text-muted hover:bg-secondary"
+            }`}
+            aria-label="Страница товаров с маркировкой"
+          >
+            С маркировкой
+          </Link>
+          <Link
+            to={`/app/warehouses/${warehouseId}/unmarked`}
+            className={`px-3 py-2 rounded-lg border text-sm transition ${
+              section === "unmarked"
+                ? "border-primary bg-primary text-white"
+                : "border-border text-muted hover:bg-secondary"
+            }`}
+            aria-label="Страница товаров без маркировки"
+          >
+            Без маркировки
+          </Link>
+        </div>
       </div>
 
+      {section !== "unmarked" ? (
       <div className="rounded-xl border border-border bg-white p-4 shadow-soft space-y-4">
         <div className="flex flex-wrap items-end gap-3 justify-between">
           <div className="flex-1 min-w-[200px]">
@@ -710,7 +741,9 @@ const CompanyWarehouseStock = () => {
           </div>
         ) : null}
       </div>
+      ) : null}
 
+      {section !== "marked" ? (
       <div className="rounded-xl border border-border bg-white p-4 shadow-soft space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -819,6 +852,7 @@ const CompanyWarehouseStock = () => {
           </div>
         ) : null}
       </div>
+      ) : null}
 
       {editOpen ? (
         <div
@@ -917,5 +951,8 @@ const CompanyWarehouseStock = () => {
     </div>
   );
 };
+
+export const CompanyWarehouseMarkedStockPage = () => <CompanyWarehouseStock section="marked" />;
+export const CompanyWarehouseUnmarkedStockPage = () => <CompanyWarehouseStock section="unmarked" />;
 
 export default CompanyWarehouseStock;

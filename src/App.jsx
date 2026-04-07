@@ -6,7 +6,10 @@ import CompanyEmployees from "./components/company/CompanyEmployees";
 import EmployeeProfile from "./components/company/EmployeeProfile";
 import CompanyRoles from "./components/company/CompanyRoles";
 import CompanyWarehouses from "./components/company/CompanyWarehouses";
-import CompanyWarehouseStock from "./components/company/CompanyWarehouseStock";
+import {
+  CompanyWarehouseMarkedStockPage,
+  CompanyWarehouseUnmarkedStockPage,
+} from "./components/company/CompanyWarehouseStock";
 import CompanySettings from "./components/company/CompanySettings";
 import CompanySuppliers from "./components/company/CompanySuppliers";
 import CompanyProducts from "./components/company/CompanyProducts";
@@ -80,7 +83,9 @@ function App() {
           <Route path="warehouses" element={<CompanyWarehouses />} />
           <Route path="warehouses/:warehouseId/receipt" element={<WarehouseReceipt />} />
           <Route path="warehouses/:warehouseId/outgoing" element={<WarehouseOutgoing />} />
-          <Route path="warehouses/:warehouseId" element={<CompanyWarehouseStock />} />
+          <Route path="warehouses/:warehouseId" element={<Navigate to="marked" replace />} />
+          <Route path="warehouses/:warehouseId/marked" element={<CompanyWarehouseMarkedStockPage />} />
+          <Route path="warehouses/:warehouseId/unmarked" element={<CompanyWarehouseUnmarkedStockPage />} />
           <Route path="invoices" element={<CompanyInvoices />} />
           <Route path="invoices/:invoiceId" element={<CompanyInvoiceDetail />} />
           <Route path="outgoing-invoices" element={<Navigate to="/app/invoices" replace />} />
