@@ -252,7 +252,7 @@ export const AuthProvider = ({ children }) => {
       const id = activeContext.organizationId;
       if (id == null) invalid = true;
       else if (Array.isArray(availableContexts.organizations)) {
-        if (!availableContexts.organizations.some((o) => o.id === id)) invalid = true;
+        if (!availableContexts.organizations.some((o) => Number(o.id) === Number(id))) invalid = true;
       }
     }
     if (invalid) clearActiveContext();

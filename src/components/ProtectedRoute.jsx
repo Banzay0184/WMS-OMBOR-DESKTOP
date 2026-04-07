@@ -75,7 +75,11 @@ const ProtectedRoute = ({ children, requireContext }) => {
     Boolean(requireContext) &&
     !activeContext &&
     (checkingContexts || availableContexts === null);
-  if (shouldWaitForContextResolution) {
+  const shouldWaitForOrganizationContexts =
+    requireContext === "organization" &&
+    activeContext?.type === "organization" &&
+    availableContexts === null;
+  if (shouldWaitForContextResolution || shouldWaitForOrganizationContexts) {
     return null;
   }
 
@@ -98,7 +102,7 @@ const ProtectedRoute = ({ children, requireContext }) => {
     if (!Array.isArray(orgs)) {
       return <Navigate to="/select-context" replace />;
     }
-    if (Array.isArray(orgs) && !orgs.some((o) => o.id === id)) {
+    if (Array.isArray(orgs) && !orgs.some((o) => Number(o.id) === Number(id))) {
       return <Navigate to="/select-context" replace state={{ reason: "context_unavailable" }} />;
     }
   }
