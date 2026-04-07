@@ -186,6 +186,29 @@ export const AuthProvider = ({ children }) => {
     });
   }, []);
 
+  const clearForbiddenAppPage = useCallback((organizationId, pageKey) => {
+    if (!organizationId || !pageKey) return;
+    setForbiddenAppPages((prev) => {
+      const orgKey = String(organizationId);
+      const prevOrg = prev?.[orgKey];
+      if (!prevOrg || typeof prevOrg !== "object" || !prevOrg?.[pageKey]) return prev;
+
+      const nextOrg = { ...prevOrg };
+      delete nextOrg[pageKey];
+
+      const next = { ...(prev && typeof prev === "object" ? prev : {}) };
+      if (Object.keys(nextOrg).length === 0) delete next[orgKey];
+      else next[orgKey] = nextOrg;
+
+      try {
+        localStorage.setItem(STORAGE_KEYS.forbiddenAppPages, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
   const isAppPageForbidden = useCallback(
     (organizationId, pageKey) => {
       if (!organizationId || !pageKey) return false;
@@ -301,6 +324,7 @@ export const AuthProvider = ({ children }) => {
       logout,
       updateUser,
       markForbiddenAppPage,
+      clearForbiddenAppPage,
       isAppPageForbidden,
     }),
     [
@@ -319,6 +343,7 @@ export const AuthProvider = ({ children }) => {
       logout,
       updateUser,
       markForbiddenAppPage,
+      clearForbiddenAppPage,
       isAppPageForbidden,
     ]
   );

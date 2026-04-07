@@ -5,7 +5,7 @@ import { authFetch } from "../../api/client";
 import { formatPhoneDisplay, getPhoneDigits, PHONE_PLACEHOLDER } from "../../utils/phone";
 
 const CompanySettings = () => {
-  const { activeContext, markForbiddenAppPage } = useAuth();
+  const { activeContext, markForbiddenAppPage, clearForbiddenAppPage } = useAuth();
   const organizationId = activeContext?.type === "organization" ? activeContext.organizationId : null;
   const [organization, setOrganization] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -101,6 +101,9 @@ const CompanySettings = () => {
       setCanViewCompany(canView);
       setCanEditCompany(canEdit);
       setIsReadOnly(!canEdit);
+      if (canView) {
+        clearForbiddenAppPage?.(organizationId, "company_settings");
+      }
     } catch {
       setCanViewCompany(false);
       setCanEditCompany(false);
