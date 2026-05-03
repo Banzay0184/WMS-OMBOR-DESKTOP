@@ -103,6 +103,16 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   const [unmarkedPageSize] = useState(25);
   const [canUseUpc, setCanUseUpc] = useState(false);
 
+  const [outgoingRows, setOutgoingRows] = useState([]);
+  const [outgoingTotalCount, setOutgoingTotalCount] = useState(0);
+  const [outgoingFilteredCount, setOutgoingFilteredCount] = useState(0);
+  const [outgoingLoading, setOutgoingLoading] = useState(true);
+  const [outgoingError, setOutgoingError] = useState("");
+  const [outgoingSearch, setOutgoingSearch] = useState("");
+  const [outgoingDebouncedSearch, setOutgoingDebouncedSearch] = useState("");
+  const [outgoingPage, setOutgoingPage] = useState(1);
+  const [outgoingPageSize] = useState(10);
+
   const [editOpen, setEditOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
   const [editMarkingCode, setEditMarkingCode] = useState("");
@@ -189,6 +199,10 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     const t = setTimeout(() => setUnmarkedDebouncedSearch(unmarkedSearch), 400);
     return () => clearTimeout(t);
   }, [unmarkedSearch]);
+  useEffect(() => {
+    const t = setTimeout(() => setOutgoingDebouncedSearch(outgoingSearch), 400);
+    return () => clearTimeout(t);
+  }, [outgoingSearch]);
 
   useEffect(() => {
     void loadWarehouse();
@@ -268,9 +282,63 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     markForbiddenAppPage,
   ]);
 
+  const loadOutgoingMarkingUnits = useCallback(async () => {
+    if (!organizationId || !warehouseId) return;
+    setOutgoingLoading(true);
+    setOutgoingError("");
+    try {
+      const params = new URLSearchParams();
+      params.set("page", String(outgoingPage));
+      params.set("page_size", String(outgoingPageSize));
+      if (outgoingDebouncedSearch.trim()) params.set("search", outgoingDebouncedSearch.trim());
+
+      const res = await authFetch(
+        `platform/organizations/${organizationId}/warehouses/${warehouseId}/outgoing-marking-units/?${params.toString()}`
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 403) {
+          markForbiddenAppPage?.(organizationId, "warehouses");
+          setOutgoingError("Нет доступа.");
+          setOutgoingRows([]);
+          setOutgoingTotalCount(0);
+          setOutgoingFilteredCount(0);
+          return;
+        }
+        setOutgoingError(typeof data.detail === "string" ? data.detail : "Ошибка загрузки");
+        setOutgoingRows([]);
+        setOutgoingTotalCount(0);
+        setOutgoingFilteredCount(0);
+        return;
+      }
+      setOutgoingRows(Array.isArray(data.results) ? data.results : []);
+      setOutgoingTotalCount(typeof data.total_count === "number" ? data.total_count : 0);
+      setOutgoingFilteredCount(typeof data.count === "number" ? data.count : 0);
+    } catch (err) {
+      setOutgoingError(err.message ?? "Ошибка сети");
+      setOutgoingRows([]);
+      setOutgoingTotalCount(0);
+      setOutgoingFilteredCount(0);
+    } finally {
+      setOutgoingLoading(false);
+    }
+  }, [
+    organizationId,
+    warehouseId,
+    outgoingPage,
+    outgoingPageSize,
+    outgoingDebouncedSearch,
+    markForbiddenAppPage,
+  ]);
+
   useEffect(() => {
     void loadUnmarkedStock();
   }, [loadUnmarkedStock]);
+
+  useEffect(() => {
+    if (section !== "outgoing_marked") return;
+    void loadOutgoingMarkingUnits();
+  }, [section, loadOutgoingMarkingUnits]);
 
   useEffect(() => {
     if (filteredCount <= 0) return;
@@ -282,6 +350,12 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     const tp = Math.max(1, Math.ceil(unmarkedFilteredCount / unmarkedPageSize));
     if (unmarkedPage > tp) setUnmarkedPage(tp);
   }, [unmarkedFilteredCount, unmarkedPage, unmarkedPageSize]);
+
+  useEffect(() => {
+    if (outgoingFilteredCount <= 0) return;
+    const tp = Math.max(1, Math.ceil(outgoingFilteredCount / outgoingPageSize));
+    if (outgoingPage > tp) setOutgoingPage(tp);
+  }, [outgoingFilteredCount, outgoingPage, outgoingPageSize]);
 
   useEffect(() => {
     if (rows.length === 0) return;
@@ -505,10 +579,16 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   const showPagination = filteredCount > 0;
   const unmarkedTotalPages = Math.max(1, Math.ceil(Math.max(unmarkedFilteredCount, 1) / unmarkedPageSize));
   const showUnmarkedPagination = unmarkedFilteredCount > unmarkedPageSize;
+  const outgoingTotalPages = Math.max(1, Math.ceil(Math.max(outgoingFilteredCount, 1) / outgoingPageSize));
+  const showOutgoingPagination = outgoingFilteredCount > 0;
 
   const handleSearchChange = (e) => {
     setPage(1);
     setSearch(e.target.value);
+  };
+  const handleOutgoingSearchChange = (e) => {
+    setOutgoingPage(1);
+    setOutgoingSearch(e.target.value);
   };
   const handleUnmarkedSearchChange = (e) => {
     setUnmarkedPage(1);
@@ -528,12 +608,17 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
               Маркировки из утверждённых приходов: одна строка — один код. Отметьте позиции и нажмите «Расход»,
               чтобы открыть расходную счёт‑фактуру с готовыми товарами и выбранными маркировками.
             </p>
+          ) : section === "outgoing_marked" ? (
+            <p className="text-sm text-muted/75 mt-1">
+              Списанные маркировки по этому складу: коды из утверждённых расходных счёт‑фактур (одна строка — одна
+              единица маркировки).
+            </p>
           ) : (
             <p className="text-sm text-muted/75 mt-1">
               Остатки товаров без маркировки: приход минус расход по количеству.
             </p>
           )}
-          {!rowsLoading && rows.length === 0 && totalCount === 0 ? null : (
+          {section === "marked" && !(!rowsLoading && rows.length === 0 && totalCount === 0) ? (
             <p className="text-sm font-medium text-muted mt-2" aria-live="polite">
               Всего единиц учёта на складе: {rowsLoading ? "…" : totalCount}
               {debouncedSearch.trim() && !rowsLoading ? (
@@ -543,7 +628,18 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                 </span>
               ) : null}
             </p>
-          )}
+          ) : null}
+          {section === "outgoing_marked" ? (
+            <p className="text-sm font-medium text-muted mt-2" aria-live="polite">
+              Всего списано по маркировке (по расходам): {outgoingLoading ? "…" : outgoingTotalCount}
+              {outgoingDebouncedSearch.trim() && !outgoingLoading ? (
+                <span className="text-muted/80 font-normal">
+                  {" "}
+                  · по запросу найдено: {outgoingFilteredCount}
+                </span>
+              ) : null}
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
@@ -556,6 +652,17 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
             aria-label="Страница товаров с маркировкой"
           >
             С маркировкой
+          </Link>
+          <Link
+            to={`/app/warehouses/${warehouseId}/outgoing-marked`}
+            className={`px-3 py-2 rounded-lg border text-sm transition ${
+              section === "outgoing_marked"
+                ? "border-primary bg-primary text-white"
+                : "border-border text-muted hover:bg-secondary"
+            }`}
+            aria-label="Списанные маркировки по расходным документам"
+          >
+            Расход (маркировка)
           </Link>
           <Link
             to={`/app/warehouses/${warehouseId}/unmarked`}
@@ -571,7 +678,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         </div>
       </div>
 
-      {section !== "unmarked" ? (
+      {section === "marked" ? (
       <div className="rounded-xl border border-border bg-white p-4 shadow-soft space-y-4">
         <div className="flex flex-wrap items-end gap-3 justify-between">
           <div className="flex-1 min-w-[200px]">
@@ -767,7 +874,150 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       </div>
       ) : null}
 
-      {section !== "marked" ? (
+      {section === "outgoing_marked" ? (
+        <div className="rounded-xl border border-border bg-white p-4 shadow-soft space-y-4">
+          <div className="flex flex-wrap items-end gap-3 justify-between">
+            <div className="flex-1 min-w-[200px]">
+              <label htmlFor="wh-outgoing-search" className="block text-xs font-medium text-muted/80 mb-1">
+                Поиск по коду маркировки, наименованию, ИКПУ{canUseUpc ? ", UPC" : ""}, номеру расходного счёта
+              </label>
+              <input
+                id="wh-outgoing-search"
+                type="search"
+                value={outgoingSearch}
+                onChange={handleOutgoingSearchChange}
+                placeholder={canUseUpc ? "Код, наименование, ИКПУ, UPC, № счёта…" : "Код, наименование ИКПУ, № счёта…"}
+                className={INPUT_CLASS}
+                aria-label="Поиск списанных маркировок"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+
+          {outgoingError ? (
+            <p className="text-sm text-red-800 bg-red-50/80 border border-red-200/70 rounded-lg px-4 py-2.5" role="alert">
+              {outgoingError}
+            </p>
+          ) : null}
+
+          {outgoingLoading ? (
+            <p className="text-sm text-muted/75 py-6">Загрузка…</p>
+          ) : outgoingTotalCount === 0 ? (
+            <div className="rounded-lg border border-border/60 bg-neutral-50/50 p-6 text-sm text-muted/80">
+              <p>
+                Нет списанных маркировок по этому складу. Они появляются после утверждения расходных счёт‑фактур, в
+                которых для позиций указаны коды маркировки.
+              </p>
+            </div>
+          ) : outgoingFilteredCount === 0 ? (
+            <p className="text-sm text-muted/75 py-6">Ничего не найдено по запросу.</p>
+          ) : (
+            <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs font-semibold text-muted/70 bg-neutral-50/90">
+                    <th className="py-2.5 px-3">Код маркировки</th>
+                    <th className="py-2.5 px-3 w-[88px]">Data Matrix</th>
+                    <th className="py-2.5 px-3 w-[88px]">Фото</th>
+                    <th className="py-2.5 px-3">Наименование</th>
+                    <th className="py-2.5 px-3">ИКПУ</th>
+                    {canUseUpc ? <th className="py-2.5 px-3">UPC</th> : null}
+                    <th className="py-2.5 px-3">Договор</th>
+                    <th className="py-2.5 px-3">Расходная счёт‑фактура</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {outgoingRows.map((row, idx) => {
+                    const name = row.our_name?.trim() || row.ikpu_name?.trim() || "—";
+                    const oid = row.outgoing_invoice_id;
+                    const rowKey = `out-${oid}-${row.line_id}-${row.marking_index ?? idx}-${row.marking_code}`;
+                    return (
+                      <tr key={rowKey} className="border-b border-border/60 hover:bg-secondary/40">
+                        <td className="py-2 px-3 font-mono text-xs align-top break-all max-w-[14rem]">
+                          {row.marking_code}
+                        </td>
+                        <td className="py-2 px-3 align-middle">
+                          <MarkingQrCell value={row.marking_code} />
+                        </td>
+                        <td className="py-2 px-3 align-middle">
+                          <ProductPhotoCell url={row.product_image_url} label={name} />
+                        </td>
+                        <td className="py-2 px-3 align-top max-w-[16rem]">
+                          <span className="font-medium text-muted">{name}</span>
+                          {row.ikpu_name && row.our_name ? (
+                            <span className="block text-xs text-muted/70 mt-0.5">{row.ikpu_name}</span>
+                          ) : null}
+                        </td>
+                        <td className="py-2 px-3 font-mono text-xs align-top">{row.ikpu_code || "—"}</td>
+                        {canUseUpc ? (
+                          <td className="py-2 px-3 font-mono text-xs align-top">{row.upc || "—"}</td>
+                        ) : null}
+                        <td className="py-2 px-3 align-top text-muted">
+                          <span className="inline-block max-w-[14rem] break-words">
+                            {row.contract_number || "—"}
+                            {row.contract_date ? (
+                              <span className="block text-xs text-muted/80 mt-0.5">
+                                от {formatDate(row.contract_date)}
+                              </span>
+                            ) : null}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 align-top">
+                          <Link
+                            to={`/app/outgoing-invoices/${oid}`}
+                            className="text-primary font-medium hover:underline"
+                            aria-label={`Открыть расходную счёт‑фактуру ${row.invoice_number || oid}`}
+                          >
+                            {row.invoice_number?.trim()
+                              ? `№ ${row.invoice_number.trim()}`
+                              : `Документ № ${oid}`}
+                            {row.invoice_date ? (
+                              <span className="block text-xs text-muted/80 font-normal mt-0.5">
+                                от {formatDate(row.invoice_date)}
+                              </span>
+                            ) : null}
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {showOutgoingPagination && !outgoingLoading && outgoingTotalCount > 0 && outgoingFilteredCount > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/60">
+              <p className="text-xs text-muted/70">
+                {outgoingDebouncedSearch.trim() ? `Найдено: ${outgoingFilteredCount} · ` : ""}
+                страница {outgoingPage} из {outgoingTotalPages}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={outgoingPage <= 1}
+                  onClick={() => setOutgoingPage((p) => Math.max(1, p - 1))}
+                  className="px-3 py-1.5 text-sm rounded-lg border border-border bg-white disabled:opacity-40"
+                  aria-label="Предыдущая страница расходных маркировок"
+                >
+                  Назад
+                </button>
+                <button
+                  type="button"
+                  disabled={outgoingPage >= outgoingTotalPages}
+                  onClick={() => setOutgoingPage((p) => p + 1)}
+                  className="px-3 py-1.5 text-sm rounded-lg border border-border bg-white disabled:opacity-40"
+                  aria-label="Следующая страница расходных маркировок"
+                >
+                  Вперёд
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {section === "unmarked" ? (
       <div className="rounded-xl border border-border bg-white p-4 shadow-soft space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -988,6 +1238,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
 };
 
 export const CompanyWarehouseMarkedStockPage = () => <CompanyWarehouseStock section="marked" />;
+export const CompanyWarehouseOutgoingMarkedStockPage = () => <CompanyWarehouseStock section="outgoing_marked" />;
 export const CompanyWarehouseUnmarkedStockPage = () => <CompanyWarehouseStock section="unmarked" />;
 
 export default CompanyWarehouseStock;

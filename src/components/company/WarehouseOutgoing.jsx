@@ -26,6 +26,18 @@ const ITEM_SUM_BOX_ACCENT =
 const DEFAULT_VAT_RATE_PERCENT = 12;
 const MAX_MARKING_SLOTS = 500;
 
+/** Краткое наименование товара для шапки позиции (расход по маркировке / без). */
+const getOutgoingItemProductTitle = (item) => {
+  const our = (item?.our_name || "").trim();
+  const ikpu = (item?.ikpu_name || "").trim();
+  if (our && ikpu && our !== ikpu) {
+    return { primary: our, secondary: ikpu };
+  }
+  if (our) return { primary: our, secondary: null };
+  if (ikpu) return { primary: ikpu, secondary: null };
+  return { primary: "Наименование не указано", secondary: null };
+};
+
 const normalizeInn = (value) => (value || "").replace(/\D/g, "");
 const roundMoney = (value) => Math.round(Number(value) * 100) / 100;
 const parseMoneyInput = (value) => {
@@ -1043,6 +1055,8 @@ const WarehouseOutgoing = () => {
               const quantityInt = Math.min(MAX_MARKING_SLOTS, Math.max(0, Math.floor(quantity)));
               const markings = resizeMarkingsArray(item.markings, quantityInt);
               const requiresMarking = item.requires_marking !== false;
+              const productTitle = getOutgoingItemProductTitle(item);
+              const filledMarkingsCount = markings.filter((m) => String(m || "").trim() !== "").length;
               const showUpc = canUseUpc && !isUnmarkedExpenseMode && item.show_upc !== false;
               const allowPrice = !isUnmarkedExpenseMode && item.allow_price !== false;
               const identityLocked = isItemFixed || isUnmarkedExpenseMode || item.lock_identity_fields === true;
@@ -1056,12 +1070,40 @@ const WarehouseOutgoing = () => {
                   className="rounded-xl border border-border/80 bg-white shadow-soft overflow-hidden"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3 p-3 border-b border-border/60 bg-neutral-50/60">
-                    <span
-                      className="flex h-9 min-w-[2.25rem] items-center justify-center rounded border border-border bg-white text-sm font-semibold tabular-nums text-muted shrink-0"
-                      aria-label={`Позиция ${idx + 1}`}
-                    >
-                      {idx + 1}
-                    </span>
+                    <div className="flex flex-wrap items-start gap-3 min-w-0 flex-1">
+                      <span
+                        className="flex h-9 min-w-[2.25rem] items-center justify-center rounded border border-border bg-white text-sm font-semibold tabular-nums text-muted shrink-0"
+                        aria-label={`Позиция ${idx + 1}`}
+                      >
+                        {idx + 1}
+                      </span>
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <p className="text-[11px] font-medium text-muted/70 uppercase tracking-wide">
+                          Расходуемый товар
+                        </p>
+                        <p
+                          className="text-sm font-semibold text-muted break-words"
+                          title={productTitle.primary}
+                        >
+                          {productTitle.primary}
+                        </p>
+                        {productTitle.secondary ? (
+                          <p className="text-xs text-muted/75 break-words" title={productTitle.secondary}>
+                            По каталогу ИКПУ: {productTitle.secondary}
+                          </p>
+                        ) : null}
+                        {requiresMarking ? (
+                          <p className="text-xs text-muted/80">
+                            С маркировкой: {quantityInt} ед.
+                            {filledMarkingsCount > 0
+                              ? ` · кодов заполнено: ${filledMarkingsCount}`
+                              : ""}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted/80">Без маркировки · количество: {quantityInt}</p>
+                        )}
+                      </div>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setItems((prev) => prev.filter((x) => x.id !== item.id))}
@@ -1279,7 +1321,10 @@ const WarehouseOutgoing = () => {
                     {requiresMarking ? (
                       <div className="mt-3 pt-3 border-t border-border/60 bg-secondary/30 -mx-3 sm:-mx-4 px-3 sm:px-4 pb-2 rounded-b-xl">
                         <p className="block text-sm font-semibold text-muted mb-2">
-                          Маркировки по единицам
+                          Маркировки по единицам —{" "}
+                          <span className="font-normal text-muted/90 break-words">
+                            «{productTitle.primary}»
+                          </span>
                         </p>
                         {quantityInt <= 0 ? (
                           <p className="text-sm text-muted/70">
