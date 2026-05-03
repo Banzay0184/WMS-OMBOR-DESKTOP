@@ -684,7 +684,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         <div className="flex flex-wrap items-end gap-3 justify-between">
           <div className="flex-1 min-w-[200px]">
             <label htmlFor="wh-stock-search" className="block text-xs font-medium text-muted/80 mb-1">
-              Поиск: код маркировки — только полное совпадение; наименование, ИКПУ{canUseUpc ? ", UPC" : ""} — по вхождению
+              Поиск: код маркировки — полная строка целиком (не только цифры GTIN); наименование, ИКПУ{canUseUpc ? ", UPC" : ""} — по вхождению
             </label>
             <input
               id="wh-stock-search"
