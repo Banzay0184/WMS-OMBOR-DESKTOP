@@ -605,8 +605,9 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
           <h1 className="text-xl font-semibold text-muted tracking-tight mt-2">{titleName}</h1>
           {section === "marked" ? (
             <p className="text-sm text-muted/75 mt-1">
-              Маркировки из утверждённых приходов: одна строка — один код. Отметьте позиции и нажмите «Расход»,
-              чтобы открыть расходную счёт‑фактуру с готовыми товарами и выбранными маркировками.
+              Маркировки из утверждённых приходов: одна строка — один код. Уже списанные по утверждённым расходным
+              счёт‑фактурам этого склада коды здесь не показываются — только остаток. Отметьте позиции и нажмите
+              «Расход», чтобы открыть расходную счёт‑фактуру с готовыми товарами и выбранными маркировками.
             </p>
           ) : section === "outgoing_marked" ? (
             <p className="text-sm text-muted/75 mt-1">
@@ -683,7 +684,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         <div className="flex flex-wrap items-end gap-3 justify-between">
           <div className="flex-1 min-w-[200px]">
             <label htmlFor="wh-stock-search" className="block text-xs font-medium text-muted/80 mb-1">
-              Поиск по коду маркировки, наименованию, ИКПУ{canUseUpc ? ", UPC" : ""}
+              Поиск: код маркировки — только полное совпадение; наименование, ИКПУ{canUseUpc ? ", UPC" : ""} — по вхождению
             </label>
             <input
               id="wh-stock-search"
@@ -692,7 +693,11 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
               onChange={handleSearchChange}
               placeholder={canUseUpc ? "Код, наименование, ИКПУ, UPC…" : "Код, наименование ИКПУ…"}
               className={INPUT_CLASS}
-              aria-label={canUseUpc ? "Поиск по коду маркировки, наименованию, ИКПУ или UPC" : "Поиск по коду маркировки, наименованию или ИКПУ"}
+              aria-label={
+                canUseUpc
+                  ? "Поиск: полный код маркировки или вхождение в наименование, ИКПУ, UPC"
+                  : "Поиск: полный код маркировки или вхождение в наименование, ИКПУ"
+              }
               autoComplete="off"
             />
           </div>
@@ -879,7 +884,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
           <div className="flex flex-wrap items-end gap-3 justify-between">
             <div className="flex-1 min-w-[200px]">
               <label htmlFor="wh-outgoing-search" className="block text-xs font-medium text-muted/80 mb-1">
-                Поиск по коду маркировки, наименованию, ИКПУ{canUseUpc ? ", UPC" : ""}, номеру расходного счёта
+                Поиск: маркировка — полное совпадение; наименование, ИКПУ{canUseUpc ? ", UPC" : ""}, № расхода — по вхождению
               </label>
               <input
                 id="wh-outgoing-search"
@@ -888,7 +893,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                 onChange={handleOutgoingSearchChange}
                 placeholder={canUseUpc ? "Код, наименование, ИКПУ, UPC, № счёта…" : "Код, наименование ИКПУ, № счёта…"}
                 className={INPUT_CLASS}
-                aria-label="Поиск списанных маркировок"
+                aria-label="Поиск списанных маркировок: полный код или вхождение в наименование и номер расхода"
                 autoComplete="off"
               />
             </div>
