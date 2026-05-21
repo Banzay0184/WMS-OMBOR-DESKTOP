@@ -299,8 +299,9 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
 
   useEffect(() => {
     if (!canUseMarking || !canLoadWarehouseStock || permissionsLoading) return;
+    if (section !== "marked" && section !== "unmarked") return;
     void loadMarkingUnits();
-  }, [canUseMarking, canLoadWarehouseStock, permissionsLoading, loadMarkingUnits]);
+  }, [canUseMarking, canLoadWarehouseStock, permissionsLoading, section, loadMarkingUnits]);
 
   const loadUnmarkedStock = useCallback(async () => {
     if (!organizationId || !warehouseId || !canLoadWarehouseStock) return;
@@ -828,6 +829,9 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
               aria-label="Страница товаров с маркировкой"
             >
               С маркировкой
+              {!rowsLoading && totalCount > 0 ? (
+                <span className="ml-1.5 tabular-nums opacity-90">({totalCount})</span>
+              ) : null}
             </Link>
             <Link
               to={`/app/warehouses/${warehouseId}/outgoing-marked`}
@@ -859,6 +863,9 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
               aria-label="Страница товаров без маркировки"
             >
               Без маркировки
+              {!unmarkedLoading && unmarkedTotalCount > 0 ? (
+                <span className="ml-1.5 tabular-nums opacity-90">({unmarkedTotalCount})</span>
+              ) : null}
             </Link>
           </div>
         ) : (
@@ -1306,14 +1313,39 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
           </p>
         ) : null}
 
+        {!unmarkedLoading && unmarkedTotalCount === 0 && totalCount > 0 ? (
+          <div
+            className="rounded-xl border-2 border-primary/40 bg-primary/5 px-4 py-4 flex flex-wrap items-center justify-between gap-3"
+            role="status"
+          >
+            <div className="text-sm text-primary">
+              <p className="font-semibold m-0">
+                На этом складе {totalCount} единиц с маркировкой — откройте вкладку «С маркировкой», чтобы увидеть
+                список.
+              </p>
+              <p className="text-muted mt-1 m-0 text-xs">
+                Вкладка «Без маркировки» показывает только товары без кодов маркировки в приходе.
+              </p>
+            </div>
+            <Link
+              to={`/app/warehouses/${warehouseId}/marked`}
+              className="shrink-0 px-4 py-2.5 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/40"
+            >
+              Открыть «С маркировкой»
+            </Link>
+          </div>
+        ) : null}
+
         {unmarkedLoading ? (
           <p className="text-sm text-muted/75 py-6">Загрузка…</p>
         ) : unmarkedTotalCount === 0 ? (
           <div className="space-y-4 py-2">
             <p className="text-sm text-muted/80 m-0">
-              Нет остатков товаров без маркировки на этом складе.
+              {totalCount > 0
+                ? "Нет остатков без маркировки — все товары учтены по кодам маркировки (см. вкладку выше)."
+                : "Нет остатков товаров без маркировки на этом складе."}
             </p>
-            {emptyStockHint}
+            {totalCount === 0 ? emptyStockHint : null}
           </div>
         ) : unmarkedFilteredCount === 0 ? (
           <p className="text-sm text-muted/75 py-6">Ничего не найдено по запросу.</p>
