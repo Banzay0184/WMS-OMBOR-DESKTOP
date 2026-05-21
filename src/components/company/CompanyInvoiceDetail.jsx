@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { authFetch } from "../../api/client";
+import { useOrganizationTariffFeatures } from "../../utils/useOrganizationTariffFeatures";
 
 const moneyFmt = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -33,7 +34,12 @@ const CompanyInvoiceDetail = () => {
   const [approveError, setApproveError] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState("");
-  const [canUseUpc, setCanUseUpc] = useState(false);
+  const {
+    canUseUpc,
+    canUseInvoiceContract,
+    canUseInvoiceAccount,
+    canUseInvoiceIkpu,
+  } = useOrganizationTariffFeatures(organizationId);
 
   const load = useCallback(async () => {
     if (!organizationId || !invoiceId) return;
@@ -59,27 +65,6 @@ const CompanyInvoiceDetail = () => {
   useEffect(() => {
     load();
   }, [load]);
-
-  useEffect(() => {
-    if (!organizationId) {
-      setCanUseUpc(false);
-      return;
-    }
-    const loadFeatureFlags = async () => {
-      try {
-        const res = await authFetch(`platform/organizations/${organizationId}/`);
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setCanUseUpc(false);
-          return;
-        }
-        setCanUseUpc(json?.subscription?.tariff_can_upc === true);
-      } catch {
-        setCanUseUpc(false);
-      }
-    };
-    void loadFeatureFlags();
-  }, [organizationId]);
 
   const handleApprove = useCallback(async () => {
     if (!organizationId || !invoiceId) return;
@@ -196,6 +181,38 @@ const CompanyInvoiceDetail = () => {
   const createdByLabel = formatActor(data.created_by_name, data.created_by_id);
   const approvedByLabel = formatActor(data.approved_by_name, data.approved_by_id);
 
+  const docCurrencyCode = (data.currency_code || "").trim();
+  const hasForeignCurrency =
+    !!docCurrencyCode && data.exchange_rate != null && Number(data.exchange_rate) > 0;
+  const exchangeRateNum = hasForeignCurrency ? Number(data.exchange_rate) : 1;
+  const docSymbol = (data.currency_symbol || docCurrencyCode || "").trim();
+  const baseSymbol = "сўм";
+  const rateSourceLabel =
+    data.exchange_rate_source === "cbu"
+      ? "курс ЦБ Узбекистана"
+      : data.exchange_rate_source === "manual"
+        ? "курс введён вручную"
+        : "";
+
+  // В смешанном валютном приходе (есть позиции в базовой валюте) валюту удобнее
+  // показывать в каждой ячейке, а не в заголовке колонки.
+  const hasMixedLineCurrencies =
+    hasForeignCurrency &&
+    (data.lines || []).some((l) => {
+      const code = (l.unit_price_currency_code || "").trim();
+      return code && code !== docCurrencyCode;
+    });
+  const priceLabel = hasForeignCurrency
+    ? hasMixedLineCurrencies
+      ? "Цена"
+      : `Цена (${docCurrencyCode})`
+    : "Цена";
+  const amountLabel = hasForeignCurrency
+    ? hasMixedLineCurrencies
+      ? "Сумма"
+      : `Сумма (${docCurrencyCode})`
+    : "Сумма";
+
   const editReceiptHref =
     data.warehouse_id != null
       ? `/app/warehouses/${data.warehouse_id}/receipt?invoice=${invoiceId}`
@@ -211,7 +228,7 @@ const CompanyInvoiceDetail = () => {
           <div className="flex flex-wrap items-center gap-2 mt-2">
             <h1 className="text-xl font-semibold text-muted tracking-tight">
               Счёт‑фактура
-              {data.contract_number?.trim()
+              {canUseInvoiceContract && data.contract_number?.trim()
                 ? ` № ${data.contract_number.trim()}`
                 : ` (внутр. № ${data.id})`}
             </h1>
@@ -224,7 +241,7 @@ const CompanyInvoiceDetail = () => {
             </span>
           </div>
           <p className="text-sm text-muted/75 mt-1">
-            {data.contract_number?.trim() ? (
+            {canUseInvoiceContract && data.contract_number?.trim() ? (
               <span className="text-muted/65">Внутр. № {data.id} · </span>
             ) : null}
             {vatLabel} · создано {formatDate(data.created_at)} (создал: {createdByLabel})
@@ -292,6 +309,30 @@ const CompanyInvoiceDetail = () => {
         </p>
       ) : null}
 
+      {hasForeignCurrency ? (
+        <div
+          className="rounded-lg border border-sky-200/90 bg-sky-50/95 px-4 py-3 text-sm text-sky-950 shadow-soft print-sheet"
+          role="status"
+        >
+          <p className="m-0 font-semibold">
+            Курс пересчёта в {baseSymbol}:{" "}
+            <span className="font-mono tabular-nums">
+              1 {docCurrencyCode} = {exchangeRateNum.toLocaleString("ru-RU", { maximumFractionDigits: 6 })}{" "}
+              {baseSymbol}
+            </span>
+            {data.exchange_rate_date ? ` · на ${formatDate(data.exchange_rate_date)}` : ""}
+            {rateSourceLabel ? ` · ${rateSourceLabel}` : ""}
+          </p>
+          <p className="m-0 mt-1.5 text-xs text-sky-900/85 leading-relaxed">
+            В таблице для позиций в {docCurrencyCode} указаны суммы в {docCurrencyCode} и пересчёт в {baseSymbol} по
+            зафиксированному курсу.
+            {hasMixedLineCurrencies
+              ? ` Позиции, введённые сразу в ${baseSymbol}, пересчёту не подлежат.`
+              : ""}
+          </p>
+        </div>
+      ) : null}
+
       <div className="rounded-xl border border-border bg-white p-5 shadow-soft space-y-4 text-sm text-muted print-sheet">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted/80">Реквизиты</h2>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
@@ -303,18 +344,35 @@ const CompanyInvoiceDetail = () => {
             <dt className="text-xs text-muted/65">ИНН</dt>
             <dd className="font-mono">{data.supplier_inn || "—"}</dd>
           </div>
-          <div>
-            <dt className="text-xs text-muted/65">Договор</dt>
-            <dd>
-              {data.contract_number || "—"} {data.contract_date ? `от ${formatDate(data.contract_date)}` : ""}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted/65">Счёт</dt>
-            <dd>
-              {data.invoice_number || "—"} {data.invoice_date ? `от ${formatDate(data.invoice_date)}` : ""}
-            </dd>
-          </div>
+          {canUseInvoiceContract ? (
+            <div>
+              <dt className="text-xs text-muted/65">Договор</dt>
+              <dd>
+                {data.contract_number || "—"} {data.contract_date ? `от ${formatDate(data.contract_date)}` : ""}
+              </dd>
+            </div>
+          ) : null}
+          {canUseInvoiceAccount ? (
+            <div>
+              <dt className="text-xs text-muted/65">Счёт</dt>
+              <dd>
+                {data.invoice_number || "—"} {data.invoice_date ? `от ${formatDate(data.invoice_date)}` : ""}
+              </dd>
+            </div>
+          ) : null}
+          {hasForeignCurrency ? (
+            <div className="sm:col-span-2">
+              <dt className="text-xs text-muted/65">Валюта документа</dt>
+              <dd>
+                {docCurrencyCode}
+                {docSymbol && docSymbol !== docCurrencyCode ? ` (${docSymbol})` : ""}
+                {" · "}
+                1 {docCurrencyCode} = {exchangeRateNum.toLocaleString("ru-RU", { maximumFractionDigits: 6 })} {baseSymbol}
+                {data.exchange_rate_date ? ` (на ${formatDate(data.exchange_rate_date)})` : ""}
+                {rateSourceLabel ? ` · ${rateSourceLabel}` : ""}
+              </dd>
+            </div>
+          ) : null}
         </dl>
       </div>
 
@@ -327,33 +385,97 @@ const CompanyInvoiceDetail = () => {
             <thead>
               <tr className="border-b border-border text-left text-xs font-semibold text-muted/70">
                 <th className="py-2 px-3">Наименование</th>
-                <th className="py-2 px-3">ИКПУ</th>
+                {canUseInvoiceIkpu ? <th className="py-2 px-3">ИКПУ</th> : null}
                 {canUseUpc ? <th className="py-2 px-3">UPC</th> : null}
                 <th className="py-2 px-3 text-right">Кол-во</th>
-                <th className="py-2 px-3 text-right">Цена</th>
-                <th className="py-2 px-3 text-right">Сумма</th>
+                <th className="py-2 px-3 text-right">{priceLabel}</th>
+                {hasForeignCurrency ? (
+                  <th className="py-2 px-3 text-right">Цена ({baseSymbol})</th>
+                ) : null}
+                <th className="py-2 px-3 text-right">{amountLabel}</th>
+                {hasForeignCurrency ? (
+                  <th className="py-2 px-3 text-right">Сумма ({baseSymbol})</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
-              {(data.lines || []).map((line) => (
-                <tr key={line.id} className="border-b border-border/60">
-                  <td className="py-2 px-3 max-w-[14rem]">
-                    <span className="block font-medium">{line.our_name || line.ikpu_name || "—"}</span>
-                    {line.ikpu_name && line.our_name ? (
-                      <span className="block text-xs text-muted/75 mt-0.5 print-hide-secondary">{line.ikpu_name}</span>
+              {(data.lines || []).map((line) => {
+                // Эффективная валюта именно этой строки. Если у строки нет своей
+                // валюты — наследуем валюту документа.
+                const rowCurrencyCode = (
+                  line.unit_price_currency_code || docCurrencyCode || "UZS"
+                ).trim();
+                const isRowInDocCurrency =
+                  hasForeignCurrency && rowCurrencyCode === docCurrencyCode;
+                const priceForView = isRowInDocCurrency
+                  ? Number(line.unit_price_doc ?? 0)
+                  : Number(line.unit_price ?? 0);
+                const priceInBase = Number(line.unit_price ?? 0);
+                const amountForView = isRowInDocCurrency
+                  ? Number(line.amount_without_vat_doc ?? 0)
+                  : Number(line.amount_without_vat ?? 0);
+                const amountInBase = Number(line.amount_without_vat ?? 0);
+                const rowCurrencySuffix = isRowInDocCurrency
+                  ? ` ${docCurrencyCode}`
+                  : ` ${baseSymbol}`;
+                return (
+                  <tr key={line.id} className="border-b border-border/60">
+                    <td className="py-2 px-3 max-w-[14rem]">
+                      <span className="block font-medium">{line.our_name || line.ikpu_name || "—"}</span>
+                      {line.ikpu_name && line.our_name ? (
+                        <span className="block text-xs text-muted/75 mt-0.5 print-hide-secondary">{line.ikpu_name}</span>
+                      ) : null}
+                    </td>
+                    {canUseInvoiceIkpu ? (
+                      <td className="py-2 px-3 font-mono text-xs">{line.ikpu_code || "—"}</td>
                     ) : null}
-                  </td>
-                  <td className="py-2 px-3 font-mono text-xs">{line.ikpu_code || "—"}</td>
-                  {canUseUpc ? (
-                    <td className="py-2 px-3 font-mono text-xs">{line.upc || "—"}</td>
-                  ) : null}
-                  <td className="py-2 px-3 text-right font-mono tabular-nums">{line.quantity}</td>
-                  <td className="py-2 px-3 text-right font-mono tabular-nums">{moneyFmt.format(Number(line.unit_price ?? 0))}</td>
-                  <td className="py-2 px-3 text-right font-mono tabular-nums font-medium">
-                    {moneyFmt.format(Number(line.amount_without_vat ?? 0))}
-                  </td>
-                </tr>
-              ))}
+                    {canUseUpc ? (
+                      <td className="py-2 px-3 font-mono text-xs">{line.upc || "—"}</td>
+                    ) : null}
+                    <td className="py-2 px-3 text-right font-mono tabular-nums">{line.quantity}</td>
+                    <td className="py-2 px-3 text-right font-mono tabular-nums">
+                      {moneyFmt.format(priceForView)}
+                      {hasForeignCurrency && !isRowInDocCurrency ? (
+                        <span className="ml-1 text-xs text-muted/65">{rowCurrencySuffix.trim()}</span>
+                      ) : hasForeignCurrency && isRowInDocCurrency ? (
+                        <span className="ml-1 text-xs text-muted/65">{docCurrencyCode}</span>
+                      ) : null}
+                    </td>
+                    {hasForeignCurrency ? (
+                      <td className="py-2 px-3 text-right font-mono tabular-nums text-sky-900/90">
+                        {isRowInDocCurrency ? (
+                          <>
+                            {moneyFmt.format(priceInBase)}
+                            <span className="ml-1 text-xs text-muted/65">{baseSymbol}</span>
+                          </>
+                        ) : (
+                          <span className="text-muted/40">—</span>
+                        )}
+                      </td>
+                    ) : null}
+                    <td className="py-2 px-3 text-right font-mono tabular-nums font-medium">
+                      {moneyFmt.format(amountForView)}
+                      {hasForeignCurrency && !isRowInDocCurrency ? (
+                        <span className="ml-1 text-xs text-muted/65">{rowCurrencySuffix.trim()}</span>
+                      ) : hasForeignCurrency && isRowInDocCurrency ? (
+                        <span className="ml-1 text-xs text-muted/65">{docCurrencyCode}</span>
+                      ) : null}
+                    </td>
+                    {hasForeignCurrency ? (
+                      <td className="py-2 px-3 text-right font-mono tabular-nums font-medium text-sky-900/90">
+                        {isRowInDocCurrency ? (
+                          <>
+                            {moneyFmt.format(amountInBase)}
+                            <span className="ml-1 text-xs text-muted/65">{baseSymbol}</span>
+                          </>
+                        ) : (
+                          <span className="text-muted/40 font-normal">—</span>
+                        )}
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -364,27 +486,84 @@ const CompanyInvoiceDetail = () => {
           <span className="text-muted/80">Итого кол-во</span>
           <span className="font-mono tabular-nums text-muted">{data.total_quantity}</span>
         </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-muted/80">Без НДС</span>
-          <span className="font-mono tabular-nums font-medium">{moneyFmt.format(Number(data.total_without_vat ?? 0))}</span>
-        </div>
-        {data.vat_mode === "with" ? (
-          <>
+        {(() => {
+          const totalWithoutVat = hasForeignCurrency
+            ? Number(data.total_without_vat_doc ?? 0)
+            : Number(data.total_without_vat ?? 0);
+          const totalVat = hasForeignCurrency
+            ? Number(data.total_vat_doc ?? 0)
+            : Number(data.total_vat ?? 0);
+          const totalWithVat = hasForeignCurrency
+            ? Number(data.total_with_vat_doc ?? 0)
+            : Number(data.total_with_vat ?? 0);
+          const codeSuffix = hasForeignCurrency ? ` ${docCurrencyCode}` : "";
+          return (
+            <>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted/80">Без НДС</span>
+                <span className="font-mono tabular-nums font-medium">
+                  {moneyFmt.format(totalWithoutVat)}
+                  {codeSuffix}
+                </span>
+              </div>
+              {data.vat_mode === "with" ? (
+                <>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted/80">НДС</span>
+                    <span className="font-mono tabular-nums">
+                      {moneyFmt.format(totalVat)}
+                      {codeSuffix}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4 pt-1 border-t border-border/50 font-semibold">
+                    <span>Всего с НДС</span>
+                    <span className="font-mono tabular-nums">
+                      {moneyFmt.format(totalWithVat)}
+                      {codeSuffix}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex justify-between gap-4 pt-1 border-t border-border/50 font-semibold">
+                  <span>Итого</span>
+                  <span className="font-mono tabular-nums">
+                    {moneyFmt.format(totalWithoutVat)}
+                    {codeSuffix}
+                  </span>
+                </div>
+              )}
+            </>
+          );
+        })()}
+        {hasForeignCurrency ? (
+          <div className="mt-2 pt-2 border-t border-border/60 text-sm text-muted/90 space-y-1.5">
+            <p className="m-0 font-semibold text-muted">
+              Итого в {baseSymbol} (1 {docCurrencyCode} ={" "}
+              {exchangeRateNum.toLocaleString("ru-RU", { maximumFractionDigits: 6 })} {baseSymbol})
+              {hasMixedLineCurrencies ? (
+                <span className="block text-[11px] font-normal text-muted/65 mt-0.5">
+                  Включая позиции в {baseSymbol} (без пересчёта).
+                </span>
+              ) : null}
+            </p>
             <div className="flex justify-between gap-4">
-              <span className="text-muted/80">НДС</span>
-              <span className="font-mono tabular-nums">{moneyFmt.format(Number(data.total_vat ?? 0))}</span>
+              <span>Без НДС, {baseSymbol}</span>
+              <span className="font-mono tabular-nums">{moneyFmt.format(Number(data.total_without_vat ?? 0))}</span>
             </div>
-            <div className="flex justify-between gap-4 pt-1 border-t border-border/50 font-semibold">
-              <span>Всего с НДС</span>
-              <span className="font-mono tabular-nums">{moneyFmt.format(Number(data.total_with_vat ?? 0))}</span>
+            {data.vat_mode === "with" ? (
+              <div className="flex justify-between gap-4">
+                <span>НДС, {baseSymbol}</span>
+                <span className="font-mono tabular-nums">{moneyFmt.format(Number(data.total_vat ?? 0))}</span>
+              </div>
+            ) : null}
+            <div className="flex justify-between gap-4 font-semibold text-muted">
+              <span>{data.vat_mode === "with" ? "Всего с НДС" : "Итого"}, {baseSymbol}</span>
+              <span className="font-mono tabular-nums">
+                {moneyFmt.format(Number(data.vat_mode === "with" ? data.total_with_vat : data.total_without_vat) || 0)}
+              </span>
             </div>
-          </>
-        ) : (
-          <div className="flex justify-between gap-4 pt-1 border-t border-border/50 font-semibold">
-            <span>Итого</span>
-            <span className="font-mono tabular-nums">{moneyFmt.format(Number(data.total_without_vat ?? 0))}</span>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );

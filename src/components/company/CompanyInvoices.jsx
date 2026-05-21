@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { authFetch } from "../../api/client";
+import { useOrganizationTariffFeatures } from "../../utils/useOrganizationTariffFeatures";
 
 const INPUT_CLASS =
   "w-full px-3 py-2 rounded-lg border border-border bg-white text-muted text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
@@ -27,6 +28,8 @@ const CompanyInvoices = () => {
   const navigate = useNavigate();
   const { activeContext, markForbiddenAppPage } = useAuth();
   const organizationId = activeContext?.type === "organization" ? activeContext.organizationId : null;
+  const { canUseInvoiceContract, canUseInvoiceAccount } =
+    useOrganizationTariffFeatures(organizationId);
 
   const [warehouses, setWarehouses] = useState([]);
   const [results, setResults] = useState([]);
@@ -305,12 +308,12 @@ const CompanyInvoices = () => {
               <thead>
                 <tr className="border-b border-border text-left text-xs font-semibold uppercase tracking-wide text-muted/70">
                   <th className="py-2 pr-3">Тип</th>
-                  <th className="py-2 pr-3">Договор №</th>
-                  <th className="py-2 pr-3">Дата дог.</th>
+                  {canUseInvoiceContract ? <th className="py-2 pr-3">Договор №</th> : null}
+                  {canUseInvoiceContract ? <th className="py-2 pr-3">Дата дог.</th> : null}
                   <th className="py-2 pr-3">Статус</th>
                   <th className="py-2 pr-3">Склад</th>
                   <th className="py-2 pr-3">Контрагент</th>
-                  <th className="py-2 pr-3">Счёт</th>
+                  {canUseInvoiceAccount ? <th className="py-2 pr-3">Счёт</th> : null}
                   <th className="py-2 pr-3 text-right">Итого</th>
                   <th className="py-2 pr-0">Действия</th>
                 </tr>
@@ -329,8 +332,12 @@ const CompanyInvoices = () => {
                         {row.doc_type === "outgoing" ? "Расход" : "Приход"}
                       </span>
                     </td>
-                    <td className="py-2.5 pr-3 font-mono tabular-nums text-muted">{row.contract_number || "—"}</td>
-                    <td className="py-2.5 pr-3 text-muted">{formatDate(row.contract_date)}</td>
+                    {canUseInvoiceContract ? (
+                      <td className="py-2.5 pr-3 font-mono tabular-nums text-muted">{row.contract_number || "—"}</td>
+                    ) : null}
+                    {canUseInvoiceContract ? (
+                      <td className="py-2.5 pr-3 text-muted">{formatDate(row.contract_date)}</td>
+                    ) : null}
                     <td className="py-2.5 pr-3">
                       <span
                         className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -354,7 +361,9 @@ const CompanyInvoices = () => {
                     <td className="py-2.5 pr-3 text-muted max-w-[12rem] truncate" title={row.counterparty_name || row.supplier_name}>
                       {row.counterparty_name || row.supplier_name || "—"}
                     </td>
-                    <td className="py-2.5 pr-3 font-mono text-xs text-muted/90">{row.invoice_number || "—"}</td>
+                    {canUseInvoiceAccount ? (
+                      <td className="py-2.5 pr-3 font-mono text-xs text-muted/90">{row.invoice_number || "—"}</td>
+                    ) : null}
                     <td className="py-2.5 pr-3 text-right font-mono tabular-nums font-medium text-muted">
                       {moneyFmt.format(Number(row.total_with_vat ?? 0))}
                     </td>

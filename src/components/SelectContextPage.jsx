@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { resolveSingleContextTarget, zonesForOrganization } from "../utils/contextZones";
 
 /**
  * Экран выбора контекста входа (workspace / tenant switcher).
@@ -45,9 +46,28 @@ const SelectContextPage = () => {
 
   useEffect(() => {
     if (!availableContexts) return;
-    const total = (availableContexts.platform ? 1 : 0) + (availableContexts.organizations?.length ?? 0);
-    if (total === 0) return;
-    // При total === 1 не редиректим автоматически: показываем одну карточку, переход по клику (иначе «Сменить контекст» выглядит как «ничего не происходит»)
+    const platform = Boolean(availableContexts.platform);
+    const orgs = Array.isArray(availableContexts.organizations)
+      ? availableContexts.organizations
+      : [];
+    const totalEntries = (platform ? 1 : 0) + orgs.length;
+    if (totalEntries === 0) return;
+
+    const singleTarget = resolveSingleContextTarget(availableContexts);
+    if (!singleTarget) return;
+
+    if (singleTarget.type === "platform") {
+      setActiveContext("platform");
+      navigate("/panel", { replace: true });
+      return;
+    }
+    if (singleTarget.type === "pos") {
+      setActiveContext("pos", singleTarget.organizationId);
+      navigate("/pos", { replace: true });
+      return;
+    }
+    setActiveContext("organization", singleTarget.organizationId);
+    navigate("/app", { replace: true });
   }, [availableContexts, setActiveContext, navigate]);
 
   const handleSelectPlatform = () => {
@@ -58,6 +78,60 @@ const SelectContextPage = () => {
   const handleSelectOrganization = (org) => {
     setActiveContext("organization", org.id);
     navigate("/app", { replace: true });
+  };
+
+  const handleSelectPos = (org) => {
+    setActiveContext("pos", org.id);
+    navigate("/pos", { replace: true });
+  };
+
+  const orgZones = (org) => zonesForOrganization(org);
+
+  const renderOrgCard = (org) => {
+    const zones = orgZones(org);
+    const canApp = zones.includes("app");
+    const canPos = zones.includes("pos");
+    return (
+      <div
+        key={org.id}
+        className="rounded-xl border border-border bg-white shadow-soft overflow-hidden"
+      >
+        {canApp ? (
+          <button
+            type="button"
+            onClick={() => handleSelectOrganization(org)}
+            className="w-full flex items-center justify-between gap-4 p-4 text-left hover:bg-secondary/50 transition focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+            aria-label={`Войти в рабочую зону компании ${org.name || org.id}`}
+            tabIndex={0}
+          >
+            <span className="font-medium text-muted">{org.name || `Компания #${org.id}`}</span>
+            {org.role_name ? <span className="text-muted text-sm">{org.role_name}</span> : null}
+          </button>
+        ) : (
+          <div className="px-4 py-3 border-b border-border bg-secondary/30">
+            <div className="font-medium text-muted">{org.name || `Компания #${org.id}`}</div>
+            {org.role_name ? (
+              <div className="text-muted text-xs">{org.role_name}</div>
+            ) : null}
+          </div>
+        )}
+        {canPos ? (
+          <button
+            type="button"
+            onClick={() => handleSelectPos(org)}
+            className={
+              (canApp ? "border-t border-border " : "") +
+              "w-full flex items-center justify-between gap-4 px-4 py-2.5 bg-primary/5 text-primary text-sm font-medium hover:bg-primary/10 transition focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+            }
+            aria-label={`Открыть кассу POS компании ${org.name || org.id}`}
+            tabIndex={0}
+          >
+            <span>Открыть кассу POS</span>
+            <span aria-hidden="true">→</span>
+          </button>
+        ) : null}
+      </div>
+    );
   };
 
   if (refreshing || !availableContexts) {
@@ -147,19 +221,7 @@ const SelectContextPage = () => {
                 <span className="text-muted text-sm">Платформа</span>
               </button>
             )}
-            {organizations.map((org) => (
-              <button
-                key={org.id}
-                type="button"
-                onClick={() => handleSelectOrganization(org)}
-                className="w-full flex items-center justify-between gap-4 p-4 rounded-xl border border-border bg-white shadow-soft text-left hover:border-primary hover:bg-secondary/50 transition focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-              >
-                <span className="font-medium text-muted">{org.name || `Компания #${org.id}`}</span>
-                {org.role_name ? (
-                  <span className="text-muted text-sm">{org.role_name}</span>
-                ) : null}
-              </button>
-            ))}
+            {organizations.map(renderOrgCard)}
           </div>
         </div>
       </div>
@@ -200,21 +262,7 @@ const SelectContextPage = () => {
               <span className="text-muted text-sm">Платформа</span>
             </button>
           )}
-          {organizations.map((org) => (
-            <button
-              key={org.id}
-              type="button"
-              onClick={() => handleSelectOrganization(org)}
-              className="w-full flex items-center justify-between gap-4 p-4 rounded-xl border border-border bg-white shadow-soft text-left hover:border-primary hover:bg-secondary/50 transition focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-            >
-              <span className="font-medium text-muted">
-                {org.name || `Компания #${org.id}`}
-              </span>
-              {org.role_name ? (
-                <span className="text-muted text-sm">{org.role_name}</span>
-              ) : null}
-            </button>
-          ))}
+          {organizations.map(renderOrgCard)}
         </div>
       </div>
     </div>

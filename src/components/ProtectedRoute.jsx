@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { zonesForOrganization, resolveSingleContextTarget } from "../utils/contextZones";
+
+const PosContextRedirect = ({ organizationId, setActiveContext }) => {
+  useEffect(() => {
+    setActiveContext("pos", organizationId);
+  }, [organizationId, setActiveContext]);
+  return <Navigate to="/pos" replace />;
+};
 
 /**
  * Защита маршрутов на фронте — только для UX (навигация, куда показывать экран).
@@ -32,12 +40,18 @@ const ProtectedRoute = ({ children, requireContext }) => {
     fetchContexts()
       .then((data) => {
         if (cancelled) return;
-        const platform = Boolean(data?.platform);
-        const organizations = Array.isArray(data?.organizations) ? data.organizations : [];
-        const total = (platform ? 1 : 0) + organizations.length;
-        if (total !== 1) return;
-        if (platform) setActiveContext("platform");
-        else if (organizations[0]?.id != null) setActiveContext("organization", organizations[0].id);
+        const singleTarget = resolveSingleContextTarget(data);
+        if (!singleTarget) return;
+
+        if (singleTarget.type === "platform") {
+          setActiveContext("platform");
+          return;
+        }
+        if (singleTarget.type === "pos") {
+          setActiveContext("pos", singleTarget.organizationId);
+          return;
+        }
+        setActiveContext("organization", singleTarget.organizationId);
       })
       .finally(() => {
         if (!cancelled) setCheckingContexts(false);
@@ -90,6 +104,9 @@ const ProtectedRoute = ({ children, requireContext }) => {
   }
 
   if (requireContext === "organization") {
+    if (activeContext?.type === "pos") {
+      return <Navigate to="/pos" replace />;
+    }
     if (activeContext?.type !== "organization") {
       return <Navigate to="/select-context" replace />;
     }
@@ -102,7 +119,34 @@ const ProtectedRoute = ({ children, requireContext }) => {
     if (!Array.isArray(orgs)) {
       return <Navigate to="/select-context" replace />;
     }
-    if (Array.isArray(orgs) && !orgs.some((o) => Number(o.id) === Number(id))) {
+    const match = orgs.find((o) => Number(o.id) === Number(id));
+    if (!match) {
+      return <Navigate to="/select-context" replace state={{ reason: "context_unavailable" }} />;
+    }
+    const zones = zonesForOrganization(match);
+    if (!zones.includes("app")) {
+      if (zones.includes("pos")) {
+        return <PosContextRedirect organizationId={id} setActiveContext={setActiveContext} />;
+      }
+      return <Navigate to="/select-context" replace state={{ reason: "context_unavailable" }} />;
+    }
+  }
+
+  if (requireContext === "pos") {
+    if (activeContext?.type !== "pos") {
+      return <Navigate to="/select-context" replace />;
+    }
+    const id = activeContext?.organizationId;
+    if (id == null) {
+      return <Navigate to="/select-context" replace />;
+    }
+    const orgs = availableContexts?.organizations;
+    if (checkingContexts) return null;
+    if (!Array.isArray(orgs)) {
+      return <Navigate to="/select-context" replace />;
+    }
+    const match = orgs.find((o) => Number(o.id) === Number(id));
+    if (!match || !zonesForOrganization(match).includes("pos")) {
       return <Navigate to="/select-context" replace state={{ reason: "context_unavailable" }} />;
     }
   }

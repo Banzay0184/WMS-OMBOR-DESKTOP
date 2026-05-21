@@ -16,6 +16,7 @@ const PublicRoute = ({ children }) => {
   if (isAuthenticated) {
     if (activeContext?.type === "platform") return <Navigate to="/panel" replace />;
     if (activeContext?.type === "organization") return <Navigate to="/app" replace />;
+    if (activeContext?.type === "pos") return <Navigate to="/pos" replace />;
     return <Navigate to="/select-context" replace />;
   }
 

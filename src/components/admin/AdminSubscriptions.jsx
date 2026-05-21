@@ -83,6 +83,12 @@ const AdminSubscriptions = () => {
   const [tariffCanReports, setTariffCanReports] = useState(false);
   const [tariffCanMarking, setTariffCanMarking] = useState(false);
   const [tariffCanUpc, setTariffCanUpc] = useState(false);
+  const [tariffCanCurrency, setTariffCanCurrency] = useState(false);
+  const [tariffCanInvoiceContract, setTariffCanInvoiceContract] = useState(false);
+  const [tariffCanInvoiceAccount, setTariffCanInvoiceAccount] = useState(false);
+  const [tariffCanInvoiceIkpu, setTariffCanInvoiceIkpu] = useState(false);
+  const [tariffCanWarehouseOutgoing, setTariffCanWarehouseOutgoing] = useState(true);
+  const [tariffCanPos, setTariffCanPos] = useState(false);
   const [tariffIsActive, setTariffIsActive] = useState(true);
   const [tariffSaveLoading, setTariffSaveLoading] = useState(false);
   const [tariffSaveError, setTariffSaveError] = useState("");
@@ -152,6 +158,12 @@ const AdminSubscriptions = () => {
     setTariffCanReports(false);
     setTariffCanMarking(false);
     setTariffCanUpc(false);
+    setTariffCanCurrency(false);
+    setTariffCanInvoiceContract(false);
+    setTariffCanInvoiceAccount(false);
+    setTariffCanInvoiceIkpu(false);
+    setTariffCanWarehouseOutgoing(true);
+    setTariffCanPos(false);
     setTariffIsActive(true);
     setTariffSaveError("");
     setShowTariffForm(true);
@@ -169,6 +181,12 @@ const AdminSubscriptions = () => {
     setTariffCanReports(t.can_reports === true);
     setTariffCanMarking(t.can_marking === true);
     setTariffCanUpc(t.can_upc === true);
+    setTariffCanCurrency(t.can_currency === true);
+    setTariffCanInvoiceContract(t.can_invoice_contract === true);
+    setTariffCanInvoiceAccount(t.can_invoice_account === true);
+    setTariffCanInvoiceIkpu(t.can_invoice_ikpu === true);
+    setTariffCanWarehouseOutgoing(t.can_warehouse_outgoing !== false);
+    setTariffCanPos(t.can_pos === true);
     setTariffIsActive(t.is_active !== false);
     setTariffSaveError("");
     setShowTariffForm(true);
@@ -190,6 +208,12 @@ const AdminSubscriptions = () => {
         can_reports: tariffCanReports,
         can_marking: tariffCanMarking,
         can_upc: tariffCanUpc,
+        can_currency: tariffCanCurrency,
+        can_invoice_contract: tariffCanInvoiceContract,
+        can_invoice_account: tariffCanInvoiceAccount,
+        can_invoice_ikpu: tariffCanInvoiceIkpu,
+        can_warehouse_outgoing: tariffCanWarehouseOutgoing,
+        can_pos: tariffCanPos,
         is_active: tariffIsActive,
       };
       const url = editingTariffId
@@ -290,6 +314,12 @@ const AdminSubscriptions = () => {
                           t.can_reports && "Отчёты",
                           t.can_marking && "Маркировка",
                           t.can_upc && "UPC",
+                          t.can_currency && "Обмен валют",
+                          t.can_invoice_contract && "Договор",
+                          t.can_invoice_account && "Счёт",
+                          t.can_invoice_ikpu && "ИКПУ",
+                          t.can_warehouse_outgoing && "Расход",
+                          t.can_pos && "POS-касса",
                         ]
                           .filter(Boolean)
                           .join(", ") || "—"}
@@ -491,6 +521,42 @@ const AdminSubscriptions = () => {
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={tariffCanUpc} onChange={(e) => setTariffCanUpc(e.target.checked)} className="rounded border-border text-primary focus:ring-primary" />
                     <span className="text-sm text-muted">UPC</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={tariffCanCurrency} onChange={(e) => setTariffCanCurrency(e.target.checked)} className="rounded border-border text-primary focus:ring-primary" />
+                    <span className="text-sm text-muted">Обмен валют</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={tariffCanWarehouseOutgoing} onChange={(e) => setTariffCanWarehouseOutgoing(e.target.checked)} className="rounded border-border text-primary focus:ring-primary" />
+                    <span className="text-sm text-muted">Расход через склад</span>
+                  </label>
+                </div>
+                <p className="text-xs text-muted/70 mt-2 mb-1">Гибкая счёт‑фактура прихода (поля документа)</p>
+                <div className="flex flex-wrap gap-4 pl-1">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={tariffCanInvoiceContract} onChange={(e) => setTariffCanInvoiceContract(e.target.checked)} className="rounded border-border text-primary focus:ring-primary" />
+                    <span className="text-sm text-muted">Договор (№ и дата)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={tariffCanInvoiceAccount} onChange={(e) => setTariffCanInvoiceAccount(e.target.checked)} className="rounded border-border text-primary focus:ring-primary" />
+                    <span className="text-sm text-muted">Счёт (№ и дата)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={tariffCanInvoiceIkpu} onChange={(e) => setTariffCanInvoiceIkpu(e.target.checked)} className="rounded border-border text-primary focus:ring-primary" />
+                    <span className="text-sm text-muted">ИКПУ в позициях</span>
+                  </label>
+                </div>
+                <p className="text-xs text-muted/70 mt-2 mb-1">POS-касса (розничные продажи)</p>
+                <div className="flex flex-wrap gap-4 pl-1">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={tariffCanPos}
+                      onChange={(e) => setTariffCanPos(e.target.checked)}
+                      className="rounded border-border text-primary focus:ring-primary"
+                      aria-label="Включить POS-кассу"
+                    />
+                    <span className="text-sm text-muted">POS-касса</span>
                   </label>
                 </div>
               </div>

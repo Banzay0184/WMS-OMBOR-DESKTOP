@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_URL, COMPANY } from "../config";
 import { useAuth } from "../context/AuthContext";
+import { resolveSingleContextTarget } from "../utils/contextZones";
 
 const EyeIcon = ({ className }) => (
   <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -67,32 +68,20 @@ const LoginPage = () => {
         const contexts = data.available_contexts ?? null;
         login(data.user, tokens, contexts);
 
-        // Редирект после логина:
-        // — только 1 компания, без platform access → сразу /app
-        // — только platform access, без компаний → сразу /panel
-        // — больше 1 компании ИЛИ (platform + компании) → экран выбора /select-context
-        // Рекомендация: platform access (is_staff) — только у внутренней команды;
-        // у массовых клиентов держать только членства в компаниях, без смешивания с платформой.
-        const platform = Boolean(contexts?.platform);
-        const organizations = contexts?.organizations ?? [];
-        const total = (platform ? 1 : 0) + organizations.length;
+        const singleTarget = resolveSingleContextTarget(contexts);
 
-        if (total === 0) {
-          clearActiveContext();
-          navigate("/select-context");
-          return;
-        }
-        if (total === 1) {
-          if (platform) {
+        if (singleTarget) {
+          if (singleTarget.type === "platform") {
             setActiveContext("platform");
-            navigate("/panel");
+          } else if (singleTarget.type === "pos") {
+            setActiveContext("pos", singleTarget.organizationId);
           } else {
-            setActiveContext("organization", organizations[0]?.id);
-            navigate("/app");
+            setActiveContext("organization", singleTarget.organizationId);
           }
+          navigate(singleTarget.path);
           return;
         }
-        // Несколько контекстов — сбрасываем старый контекст (чужой аккаунт) и показываем выбор
+
         clearActiveContext();
         navigate("/select-context");
       }

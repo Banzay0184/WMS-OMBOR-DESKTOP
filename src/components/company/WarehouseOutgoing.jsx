@@ -214,6 +214,7 @@ const WarehouseOutgoing = () => {
   const [vatMode, setVatMode] = useState("without");
   const [items, setItems] = useState([createEmptyItem("row-1")]);
   const [canUseUpc, setCanUseUpc] = useState(false);
+  const [canUseWarehouseOutgoing, setCanUseWarehouseOutgoing] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -239,8 +240,10 @@ const WarehouseOutgoing = () => {
       }
       if (orgRes.ok) {
         setCanUseUpc(orgData?.subscription?.tariff_can_upc === true);
+        setCanUseWarehouseOutgoing(orgData?.subscription?.tariff_can_warehouse_outgoing !== false);
       } else {
         setCanUseUpc(false);
+        setCanUseWarehouseOutgoing(false);
       }
     } catch (err) {
       setError(err.message ?? "Ошибка сети");
@@ -678,6 +681,26 @@ const WarehouseOutgoing = () => {
   };
 
   if (!organizationId) return <p className="text-sm text-muted">Выберите организацию в контексте.</p>;
+
+  if (!loading && !canUseWarehouseOutgoing && !outgoingInvoiceId) {
+    return (
+      <div className="space-y-4 max-w-2xl mx-auto py-8">
+        <Link
+          to={warehouseId ? `/app/warehouses/${warehouseId}/marked` : "/app/warehouses"}
+          className="text-sm font-medium text-primary hover:underline"
+        >
+          ← Назад к складу
+        </Link>
+        <div className="rounded-xl border border-amber-200/80 bg-amber-50/90 px-5 py-4 text-sm text-amber-950">
+          <p className="font-semibold m-0">Расход через склад недоступен</p>
+          <p className="mt-2 m-0 text-amber-900/90">
+            В тарифе вашей компании отключена функция расходных счёт‑фактур. Обратитесь к администратору платформы,
+            чтобы включить «Расход через склад» в тарифе.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const listModeDisabled = !organizationId || (!partnersLoading && partners.length === 0);
   const isPartnerFieldsLocked = partnerMode === "list";

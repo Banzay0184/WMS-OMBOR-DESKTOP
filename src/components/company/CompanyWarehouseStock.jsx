@@ -1,9 +1,38 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import bwipjs from "bwip-js/browser";
 import { useAuth } from "../../context/AuthContext";
 import { authFetch } from "../../api/client";
 import { getImageUrl } from "../../config";
+import { useOrganizationTariffFeatures } from "../../utils/useOrganizationTariffFeatures";
+
+const rowDisplayName = (row, canUseIkpu) => {
+  const our = row?.our_name?.trim() || "";
+  if (canUseIkpu) {
+    return our || row?.ikpu_name?.trim() || "—";
+  }
+  return our || "—";
+};
+
+const buildStockSearchPlaceholder = ({ canUseIkpu, canUseUpc, withMarking }) => {
+  const parts = withMarking ? ["Код"] : [];
+  parts.push("наименование");
+  if (canUseIkpu) parts.push("ИКПУ");
+  if (canUseUpc) parts.push("UPC");
+  return `${parts.join(", ")}…`;
+};
+
+const buildStockSearchLabel = ({ canUseIkpu, canUseUpc, withMarking, extra }) => {
+  const parts = [];
+  if (withMarking) {
+    parts.push("код маркировки — полная строка целиком");
+  }
+  parts.push("наименование");
+  if (canUseIkpu) parts.push("ИКПУ");
+  if (canUseUpc) parts.push("UPC");
+  if (extra) parts.push(extra);
+  return `Поиск: ${parts.join("; ")} — по вхождению`;
+};
 
 const INPUT_CLASS =
   "w-full px-3 py-2 rounded-lg border border-border bg-white text-muted text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
@@ -101,7 +130,16 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   const [unmarkedDebouncedSearch, setUnmarkedDebouncedSearch] = useState("");
   const [unmarkedPage, setUnmarkedPage] = useState(1);
   const [unmarkedPageSize] = useState(25);
-  const [canUseUpc, setCanUseUpc] = useState(false);
+
+  const {
+    canUseUpc,
+    canUseWarehouseOutgoing,
+    canUseInvoiceIkpu,
+    canUseInvoiceContract,
+    canUseInvoiceAccount,
+    canUseMarking,
+    loading: tariffFeaturesLoading,
+  } = useOrganizationTariffFeatures(organizationId);
 
   const [outgoingRows, setOutgoingRows] = useState([]);
   const [outgoingTotalCount, setOutgoingTotalCount] = useState(0);
@@ -154,13 +192,13 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     setRowsLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams();
-      params.set("page", String(page));
-      params.set("page_size", String(pageSize));
-      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+      const payload = { page, page_size: pageSize };
+      const q = debouncedSearch.trim();
+      if (q) payload.search = q;
 
       const res = await authFetch(
-        `platform/organizations/${organizationId}/warehouses/${warehouseId}/marking-units/?${params.toString()}`
+        `platform/organizations/${organizationId}/warehouses/${warehouseId}/marking-units/`,
+        { method: "POST", body: JSON.stringify(payload) }
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -209,29 +247,20 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   }, [loadWarehouse]);
 
   useEffect(() => {
-    if (!organizationId) {
-      setCanUseUpc(false);
+    if (tariffFeaturesLoading || !warehouseId) return;
+    if (!canUseMarking && (section === "marked" || section === "outgoing_marked")) {
+      navigate(`/app/warehouses/${warehouseId}/unmarked`, { replace: true });
       return;
     }
-    const loadFeatureFlags = async () => {
-      try {
-        const res = await authFetch(`platform/organizations/${organizationId}/`);
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setCanUseUpc(false);
-          return;
-        }
-        setCanUseUpc(data?.subscription?.tariff_can_upc === true);
-      } catch {
-        setCanUseUpc(false);
-      }
-    };
-    void loadFeatureFlags();
-  }, [organizationId]);
+    if (canUseMarking && !canUseWarehouseOutgoing && section === "outgoing_marked") {
+      navigate(`/app/warehouses/${warehouseId}/marked`, { replace: true });
+    }
+  }, [canUseMarking, canUseWarehouseOutgoing, tariffFeaturesLoading, section, warehouseId, navigate]);
 
   useEffect(() => {
+    if (!canUseMarking) return;
     void loadMarkingUnits();
-  }, [loadMarkingUnits]);
+  }, [canUseMarking, loadMarkingUnits]);
 
   const loadUnmarkedStock = useCallback(async () => {
     if (!organizationId || !warehouseId) return;
@@ -287,13 +316,13 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     setOutgoingLoading(true);
     setOutgoingError("");
     try {
-      const params = new URLSearchParams();
-      params.set("page", String(outgoingPage));
-      params.set("page_size", String(outgoingPageSize));
-      if (outgoingDebouncedSearch.trim()) params.set("search", outgoingDebouncedSearch.trim());
+      const payload = { page: outgoingPage, page_size: outgoingPageSize };
+      const q = outgoingDebouncedSearch.trim();
+      if (q) payload.search = q;
 
       const res = await authFetch(
-        `platform/organizations/${organizationId}/warehouses/${warehouseId}/outgoing-marking-units/?${params.toString()}`
+        `platform/organizations/${organizationId}/warehouses/${warehouseId}/outgoing-marking-units/`,
+        { method: "POST", body: JSON.stringify(payload) }
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -332,13 +361,14 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   ]);
 
   useEffect(() => {
+    if (canUseMarking && section !== "unmarked") return;
     void loadUnmarkedStock();
-  }, [loadUnmarkedStock]);
+  }, [canUseMarking, section, loadUnmarkedStock]);
 
   useEffect(() => {
-    if (section !== "outgoing_marked") return;
+    if (!canUseMarking || section !== "outgoing_marked") return;
     void loadOutgoingMarkingUnits();
-  }, [section, loadOutgoingMarkingUnits]);
+  }, [canUseMarking, section, loadOutgoingMarkingUnits]);
 
   useEffect(() => {
     if (filteredCount <= 0) return;
@@ -506,6 +536,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   };
 
   const handleOpenExpense = () => {
+    if (!canUseWarehouseOutgoing) return;
     if (selectedKeys.size === 0) return;
     const selectedRows = [...selectedRowsByKey.entries()]
       .filter(([key]) => selectedKeys.has(key))
@@ -523,6 +554,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   };
 
   const handleOpenUnmarkedExpense = (row) => {
+    if (!canUseWarehouseOutgoing) return;
     if (!row) return;
     const prefillItem = {
       our_name: row.our_name || "",
@@ -595,6 +627,10 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     setUnmarkedSearch(e.target.value);
   };
 
+  const showUnmarkedStock = !canUseMarking || section === "unmarked";
+  const showMarkedStock = canUseMarking && section === "marked";
+  const showOutgoingMarkedStock = canUseMarking && section === "outgoing_marked";
+
   return (
     <div className="space-y-6 max-w-6xl">
       <div className="space-y-3">
@@ -603,23 +639,24 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
             ← Склады компании
           </Link>
           <h1 className="text-xl font-semibold text-muted tracking-tight mt-2">{titleName}</h1>
-          {section === "marked" ? (
+          {showMarkedStock ? (
             <p className="text-sm text-muted/75 mt-1">
               Маркировки из утверждённых приходов: одна строка — один код. Уже списанные по утверждённым расходным
               счёт‑фактурам этого склада коды здесь не показываются — только остаток. Отметьте позиции и нажмите
               «Расход», чтобы открыть расходную счёт‑фактуру с готовыми товарами и выбранными маркировками.
             </p>
-          ) : section === "outgoing_marked" ? (
+          ) : showOutgoingMarkedStock ? (
             <p className="text-sm text-muted/75 mt-1">
               Списанные маркировки по этому складу: коды из утверждённых расходных счёт‑фактур (одна строка — одна
               единица маркировки).
             </p>
-          ) : (
+          ) : showUnmarkedStock ? (
             <p className="text-sm text-muted/75 mt-1">
-              Остатки товаров без маркировки: приход минус расход по количеству.
+              Остатки товаров на складе: приход минус расход по количеству
+              {!canUseMarking ? " (учёт по кодам маркировки в тарифе не включён)" : ""}.
             </p>
-          )}
-          {section === "marked" && !(!rowsLoading && rows.length === 0 && totalCount === 0) ? (
+          ) : null}
+          {showMarkedStock && !(!rowsLoading && rows.length === 0 && totalCount === 0) ? (
             <p className="text-sm font-medium text-muted mt-2" aria-live="polite">
               Всего единиц учёта на складе: {rowsLoading ? "…" : totalCount}
               {debouncedSearch.trim() && !rowsLoading ? (
@@ -630,7 +667,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
               ) : null}
             </p>
           ) : null}
-          {section === "outgoing_marked" ? (
+          {showOutgoingMarkedStock ? (
             <p className="text-sm font-medium text-muted mt-2" aria-live="polite">
               Всего списано по маркировке (по расходам): {outgoingLoading ? "…" : outgoingTotalCount}
               {outgoingDebouncedSearch.trim() && !outgoingLoading ? (
@@ -642,74 +679,88 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
             </p>
           ) : null}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            to={`/app/warehouses/${warehouseId}/marked`}
-            className={`px-3 py-2 rounded-lg border text-sm transition ${
-              section === "marked"
-                ? "border-primary bg-primary text-white"
-                : "border-border text-muted hover:bg-secondary"
-            }`}
-            aria-label="Страница товаров с маркировкой"
-          >
-            С маркировкой
-          </Link>
-          <Link
-            to={`/app/warehouses/${warehouseId}/outgoing-marked`}
-            className={`px-3 py-2 rounded-lg border text-sm transition ${
-              section === "outgoing_marked"
-                ? "border-primary bg-primary text-white"
-                : "border-border text-muted hover:bg-secondary"
-            }`}
-            aria-label="Списанные маркировки по расходным документам"
-          >
-            Расход (маркировка)
-          </Link>
-          <Link
-            to={`/app/warehouses/${warehouseId}/unmarked`}
-            className={`px-3 py-2 rounded-lg border text-sm transition ${
-              section === "unmarked"
-                ? "border-primary bg-primary text-white"
-                : "border-border text-muted hover:bg-secondary"
-            }`}
-            aria-label="Страница товаров без маркировки"
-          >
-            Без маркировки
-          </Link>
-        </div>
+        {canUseMarking ? (
+          <div className="flex flex-wrap gap-2">
+            <Link
+              to={`/app/warehouses/${warehouseId}/marked`}
+              className={`px-3 py-2 rounded-lg border text-sm transition ${
+                section === "marked"
+                  ? "border-primary bg-primary text-white"
+                  : "border-border text-muted hover:bg-secondary"
+              }`}
+              aria-label="Страница товаров с маркировкой"
+            >
+              С маркировкой
+            </Link>
+            {canUseWarehouseOutgoing ? (
+              <Link
+                to={`/app/warehouses/${warehouseId}/outgoing-marked`}
+                className={`px-3 py-2 rounded-lg border text-sm transition ${
+                  section === "outgoing_marked"
+                    ? "border-primary bg-primary text-white"
+                    : "border-border text-muted hover:bg-secondary"
+                }`}
+                aria-label="Списанные маркировки по расходным документам"
+              >
+                Расход (маркировка)
+              </Link>
+            ) : null}
+            <Link
+              to={`/app/warehouses/${warehouseId}/unmarked`}
+              className={`px-3 py-2 rounded-lg border text-sm transition ${
+                section === "unmarked"
+                  ? "border-primary bg-primary text-white"
+                  : "border-border text-muted hover:bg-secondary"
+              }`}
+              aria-label="Страница товаров без маркировки"
+            >
+              Без маркировки
+            </Link>
+          </div>
+        ) : null}
       </div>
 
-      {section === "marked" ? (
+      {showMarkedStock ? (
       <div className="rounded-xl border border-border bg-white p-4 shadow-soft space-y-4">
         <div className="flex flex-wrap items-end gap-3 justify-between">
           <div className="flex-1 min-w-[200px]">
             <label htmlFor="wh-stock-search" className="block text-xs font-medium text-muted/80 mb-1">
-              Поиск: код маркировки — полная строка целиком (не только цифры GTIN); наименование, ИКПУ{canUseUpc ? ", UPC" : ""} — по вхождению
+              {buildStockSearchLabel({
+                canUseIkpu: canUseInvoiceIkpu,
+                canUseUpc,
+                withMarking: true,
+              })}
             </label>
             <input
               id="wh-stock-search"
               type="search"
               value={search}
               onChange={handleSearchChange}
-              placeholder={canUseUpc ? "Код, наименование, ИКПУ, UPC…" : "Код, наименование ИКПУ…"}
+              placeholder={buildStockSearchPlaceholder({
+                canUseIkpu: canUseInvoiceIkpu,
+                canUseUpc,
+                withMarking: true,
+              })}
               className={INPUT_CLASS}
-              aria-label={
-                canUseUpc
-                  ? "Поиск: полный код маркировки или вхождение в наименование, ИКПУ, UPC"
-                  : "Поиск: полный код маркировки или вхождение в наименование, ИКПУ"
-              }
+              aria-label={buildStockSearchLabel({
+                canUseIkpu: canUseInvoiceIkpu,
+                canUseUpc,
+                withMarking: true,
+              })}
               autoComplete="off"
             />
           </div>
-          <button
-            type="button"
-            onClick={handleOpenExpense}
-            disabled={rowsLoading || selectedKeys.size === 0}
-            className="shrink-0 rounded-lg px-4 py-2.5 text-sm font-semibold bg-amber-600 text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500/40 disabled:opacity-40 disabled:pointer-events-none"
-            aria-label="Открыть расходную счёт‑фактуру по выбранным единицам"
-          >
-            Расход{selectedKeys.size > 0 ? ` (${selectedKeys.size})` : ""}
-          </button>
+          {canUseWarehouseOutgoing ? (
+            <button
+              type="button"
+              onClick={handleOpenExpense}
+              disabled={rowsLoading || selectedKeys.size === 0}
+              className="shrink-0 rounded-lg px-4 py-2.5 text-sm font-semibold bg-amber-600 text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500/40 disabled:opacity-40 disabled:pointer-events-none"
+              aria-label="Открыть расходную счёт‑фактуру по выбранным единицам"
+            >
+              Расход{selectedKeys.size > 0 ? ` (${selectedKeys.size})` : ""}
+            </button>
+          ) : null}
         </div>
 
         {error ? (
@@ -748,19 +799,16 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                   <th className="py-2.5 px-3 w-[88px]">Data Matrix</th>
                   <th className="py-2.5 px-3 w-[88px]">Фото</th>
                   <th className="py-2.5 px-3">Наименование</th>
-                  <th className="py-2.5 px-3">ИКПУ</th>
+                  {canUseInvoiceIkpu ? <th className="py-2.5 px-3">ИКПУ</th> : null}
                   {canUseUpc ? <th className="py-2.5 px-3">UPC</th> : null}
-                  <th className="py-2.5 px-3">Договор</th>
-                  <th className="py-2.5 px-3">Счёт-фактура</th>
+                  {canUseInvoiceContract ? <th className="py-2.5 px-3">Договор</th> : null}
+                  {canUseInvoiceAccount ? <th className="py-2.5 px-3">Счёт-фактура</th> : null}
                   <th className="py-2.5 px-3 text-right">Действия</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row, idx) => {
-                  const name =
-                    row.our_name?.trim() ||
-                    row.ikpu_name?.trim() ||
-                    "—";
+                  const name = rowDisplayName(row, canUseInvoiceIkpu);
                   const key = `${row.invoice_id}-${row.line_id}-${row.marking_index ?? idx}-${row.marking_code}`;
                   const canMutate = row.marking_index != null && markingDetailUrl(row);
                   const rk = makeRowKey(row);
@@ -788,36 +836,42 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                       </td>
                       <td className="py-2 px-3 align-top max-w-[16rem]">
                         <span className="font-medium text-muted">{name}</span>
-                        {row.ikpu_name && row.our_name ? (
+                        {canUseInvoiceIkpu && row.ikpu_name && row.our_name ? (
                           <span className="block text-xs text-muted/70 mt-0.5">{row.ikpu_name}</span>
                         ) : null}
                       </td>
-                      <td className="py-2 px-3 font-mono text-xs align-top">{row.ikpu_code || "—"}</td>
+                      {canUseInvoiceIkpu ? (
+                        <td className="py-2 px-3 font-mono text-xs align-top">{row.ikpu_code || "—"}</td>
+                      ) : null}
                       {canUseUpc ? (
                         <td className="py-2 px-3 font-mono text-xs align-top">{row.upc || "—"}</td>
                       ) : null}
-                      <td className="py-2 px-3 align-top text-muted">
-                        <Link
-                          to={`/app/invoices/${row.invoice_id}`}
-                          className="text-primary font-medium hover:underline inline-block max-w-[14rem]"
-                          aria-label={`Открыть счёт‑фактуру по договору ${row.contract_number || row.invoice_id}`}
-                        >
-                          <span className="break-words">{row.contract_number || "—"}</span>
-                          {row.contract_date ? (
-                            <span className="block text-xs text-muted/80 font-normal mt-0.5">
-                              от {formatDate(row.contract_date)}
-                            </span>
-                          ) : null}
-                        </Link>
-                      </td>
-                      <td className="py-2 px-3 align-top">
-                        <Link
-                          to={`/app/invoices/${row.invoice_id}`}
-                          className="text-primary font-medium hover:underline"
-                        >
-                          № {row.invoice_id}
-                        </Link>
-                      </td>
+                      {canUseInvoiceContract ? (
+                        <td className="py-2 px-3 align-top text-muted">
+                          <Link
+                            to={`/app/invoices/${row.invoice_id}`}
+                            className="text-primary font-medium hover:underline inline-block max-w-[14rem]"
+                            aria-label={`Открыть счёт‑фактуру по договору ${row.contract_number || row.invoice_id}`}
+                          >
+                            <span className="break-words">{row.contract_number || "—"}</span>
+                            {row.contract_date ? (
+                              <span className="block text-xs text-muted/80 font-normal mt-0.5">
+                                от {formatDate(row.contract_date)}
+                              </span>
+                            ) : null}
+                          </Link>
+                        </td>
+                      ) : null}
+                      {canUseInvoiceAccount ? (
+                        <td className="py-2 px-3 align-top">
+                          <Link
+                            to={`/app/invoices/${row.invoice_id}`}
+                            className="text-primary font-medium hover:underline"
+                          >
+                            № {row.invoice_id}
+                          </Link>
+                        </td>
+                      ) : null}
                       <td className="py-2 px-3 align-top text-right whitespace-nowrap">
                         <div className="flex flex-wrap justify-end gap-1.5">
                           <button
@@ -884,14 +938,23 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
           <div className="flex flex-wrap items-end gap-3 justify-between">
             <div className="flex-1 min-w-[200px]">
               <label htmlFor="wh-outgoing-search" className="block text-xs font-medium text-muted/80 mb-1">
-                Поиск: маркировка — полное совпадение; наименование, ИКПУ{canUseUpc ? ", UPC" : ""}, № расхода — по вхождению
+                {buildStockSearchLabel({
+                  canUseIkpu: canUseInvoiceIkpu,
+                  canUseUpc,
+                  withMarking: true,
+                  extra: "№ расхода",
+                })}
               </label>
               <input
                 id="wh-outgoing-search"
                 type="search"
                 value={outgoingSearch}
                 onChange={handleOutgoingSearchChange}
-                placeholder={canUseUpc ? "Код, наименование, ИКПУ, UPC, № счёта…" : "Код, наименование ИКПУ, № счёта…"}
+                placeholder={`${buildStockSearchPlaceholder({
+                  canUseIkpu: canUseInvoiceIkpu,
+                  canUseUpc,
+                  withMarking: true,
+                }).replace("…", "")}, № счёта…`}
                 className={INPUT_CLASS}
                 aria-label="Поиск списанных маркировок: полный код или вхождение в наименование и номер расхода"
                 autoComplete="off"
@@ -925,15 +988,15 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                     <th className="py-2.5 px-3 w-[88px]">Data Matrix</th>
                     <th className="py-2.5 px-3 w-[88px]">Фото</th>
                     <th className="py-2.5 px-3">Наименование</th>
-                    <th className="py-2.5 px-3">ИКПУ</th>
+                    {canUseInvoiceIkpu ? <th className="py-2.5 px-3">ИКПУ</th> : null}
                     {canUseUpc ? <th className="py-2.5 px-3">UPC</th> : null}
-                    <th className="py-2.5 px-3">Договор</th>
-                    <th className="py-2.5 px-3">Расходная счёт‑фактура</th>
+                    {canUseInvoiceContract ? <th className="py-2.5 px-3">Договор</th> : null}
+                    {canUseInvoiceAccount ? <th className="py-2.5 px-3">Расходная счёт‑фактура</th> : null}
                   </tr>
                 </thead>
                 <tbody>
                   {outgoingRows.map((row, idx) => {
-                    const name = row.our_name?.trim() || row.ikpu_name?.trim() || "—";
+                    const name = rowDisplayName(row, canUseInvoiceIkpu);
                     const oid = row.outgoing_invoice_id;
                     const rowKey = `out-${oid}-${row.line_id}-${row.marking_index ?? idx}-${row.marking_code}`;
                     return (
@@ -949,40 +1012,46 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                         </td>
                         <td className="py-2 px-3 align-top max-w-[16rem]">
                           <span className="font-medium text-muted">{name}</span>
-                          {row.ikpu_name && row.our_name ? (
+                          {canUseInvoiceIkpu && row.ikpu_name && row.our_name ? (
                             <span className="block text-xs text-muted/70 mt-0.5">{row.ikpu_name}</span>
                           ) : null}
                         </td>
-                        <td className="py-2 px-3 font-mono text-xs align-top">{row.ikpu_code || "—"}</td>
+                        {canUseInvoiceIkpu ? (
+                          <td className="py-2 px-3 font-mono text-xs align-top">{row.ikpu_code || "—"}</td>
+                        ) : null}
                         {canUseUpc ? (
                           <td className="py-2 px-3 font-mono text-xs align-top">{row.upc || "—"}</td>
                         ) : null}
-                        <td className="py-2 px-3 align-top text-muted">
-                          <span className="inline-block max-w-[14rem] break-words">
-                            {row.contract_number || "—"}
-                            {row.contract_date ? (
-                              <span className="block text-xs text-muted/80 mt-0.5">
-                                от {formatDate(row.contract_date)}
-                              </span>
-                            ) : null}
-                          </span>
-                        </td>
-                        <td className="py-2 px-3 align-top">
-                          <Link
-                            to={`/app/outgoing-invoices/${oid}`}
-                            className="text-primary font-medium hover:underline"
-                            aria-label={`Открыть расходную счёт‑фактуру ${row.invoice_number || oid}`}
-                          >
-                            {row.invoice_number?.trim()
-                              ? `№ ${row.invoice_number.trim()}`
-                              : `Документ № ${oid}`}
-                            {row.invoice_date ? (
-                              <span className="block text-xs text-muted/80 font-normal mt-0.5">
-                                от {formatDate(row.invoice_date)}
-                              </span>
-                            ) : null}
-                          </Link>
-                        </td>
+                        {canUseInvoiceContract ? (
+                          <td className="py-2 px-3 align-top text-muted">
+                            <span className="inline-block max-w-[14rem] break-words">
+                              {row.contract_number || "—"}
+                              {row.contract_date ? (
+                                <span className="block text-xs text-muted/80 mt-0.5">
+                                  от {formatDate(row.contract_date)}
+                                </span>
+                              ) : null}
+                            </span>
+                          </td>
+                        ) : null}
+                        {canUseInvoiceAccount ? (
+                          <td className="py-2 px-3 align-top">
+                            <Link
+                              to={`/app/outgoing-invoices/${oid}`}
+                              className="text-primary font-medium hover:underline"
+                              aria-label={`Открыть расходную счёт‑фактуру ${row.invoice_number || oid}`}
+                            >
+                              {row.invoice_number?.trim()
+                                ? `№ ${row.invoice_number.trim()}`
+                                : `Документ № ${oid}`}
+                              {row.invoice_date ? (
+                                <span className="block text-xs text-muted/80 font-normal mt-0.5">
+                                  от {formatDate(row.invoice_date)}
+                                </span>
+                              ) : null}
+                            </Link>
+                          </td>
+                        ) : null}
                       </tr>
                     );
                   })}
@@ -1022,27 +1091,37 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         </div>
       ) : null}
 
-      {section === "unmarked" ? (
+      {showUnmarkedStock ? (
       <div className="rounded-xl border border-border bg-white p-4 shadow-soft space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-muted">Товары без маркировки</h2>
+            <h2 className="text-base font-semibold text-muted">
+              {canUseMarking ? "Товары без маркировки" : "Остатки на складе"}
+            </h2>
             <p className="text-sm text-muted/75 mt-1">
               Здесь показываются остатки по позициям без кодов маркировки: приход − расход.
             </p>
           </div>
           <div className="w-full sm:w-auto min-w-[220px]">
             <label htmlFor="wh-unmarked-search" className="block text-xs font-medium text-muted/80 mb-1">
-              Поиск по наименованию, ИКПУ{canUseUpc ? ", UPC" : ""}
+              {buildStockSearchLabel({ canUseIkpu: canUseInvoiceIkpu, canUseUpc, withMarking: false })}
             </label>
             <input
               id="wh-unmarked-search"
               type="search"
               value={unmarkedSearch}
               onChange={handleUnmarkedSearchChange}
-              placeholder={canUseUpc ? "Наименование, ИКПУ, UPC…" : "Наименование, ИКПУ…"}
+              placeholder={buildStockSearchPlaceholder({
+                canUseIkpu: canUseInvoiceIkpu,
+                canUseUpc,
+                withMarking: false,
+              })}
               className={INPUT_CLASS}
-              aria-label={canUseUpc ? "Поиск товаров без маркировки по наименованию, ИКПУ или UPC" : "Поиск товаров без маркировки по наименованию или ИКПУ"}
+              aria-label={buildStockSearchLabel({
+                canUseIkpu: canUseInvoiceIkpu,
+                canUseUpc,
+                withMarking: false,
+              })}
               autoComplete="off"
             />
           </div>
@@ -1067,7 +1146,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                 <tr className="border-b border-border text-left text-xs font-semibold text-muted/70 bg-neutral-50/90">
                   <th className="py-2.5 px-3 w-[88px]">Фото</th>
                   <th className="py-2.5 px-3">Наименование</th>
-                  <th className="py-2.5 px-3">ИКПУ</th>
+                  {canUseInvoiceIkpu ? <th className="py-2.5 px-3">ИКПУ</th> : null}
                   {canUseUpc ? <th className="py-2.5 px-3">UPC</th> : null}
                   <th className="py-2.5 px-3">Ед. изм.</th>
                   <th className="py-2.5 px-3 text-right">Остаток</th>
@@ -1076,7 +1155,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
               </thead>
               <tbody>
                 {unmarkedRows.map((row, idx) => {
-                  const name = row.our_name?.trim() || row.ikpu_name?.trim() || "—";
+                  const name = rowDisplayName(row, canUseInvoiceIkpu);
                   const key = `${row.catalog_product_id || "raw"}-${row.ikpu_code || ""}-${row.upc || ""}-${idx}`;
                   return (
                     <tr key={key} className="border-b border-border/60 hover:bg-secondary/40">
@@ -1085,25 +1164,31 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                       </td>
                       <td className="py-2 px-3 align-top max-w-[16rem]">
                         <span className="font-medium text-muted">{name}</span>
-                        {row.ikpu_name && row.our_name ? (
+                        {canUseInvoiceIkpu && row.ikpu_name && row.our_name ? (
                           <span className="block text-xs text-muted/70 mt-0.5">{row.ikpu_name}</span>
                         ) : null}
                       </td>
-                      <td className="py-2 px-3 font-mono text-xs align-top">{row.ikpu_code || "—"}</td>
+                      {canUseInvoiceIkpu ? (
+                        <td className="py-2 px-3 font-mono text-xs align-top">{row.ikpu_code || "—"}</td>
+                      ) : null}
                       {canUseUpc ? (
                         <td className="py-2 px-3 font-mono text-xs align-top">{row.upc || "—"}</td>
                       ) : null}
                       <td className="py-2 px-3 align-top">{row.unit || "шт"}</td>
                       <td className="py-2 px-3 align-top text-right font-semibold">{row.quantity ?? 0}</td>
                       <td className="py-2 px-3 align-top text-right">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenUnmarkedExpense(row)}
-                          className="px-3 py-1.5 text-xs font-medium rounded-lg border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
-                          aria-label={`Сделать расход по товару ${name}`}
-                        >
-                          Расход
-                        </button>
+                        {canUseWarehouseOutgoing ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenUnmarkedExpense(row)}
+                            className="px-3 py-1.5 text-xs font-medium rounded-lg border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                            aria-label={`Сделать расход по товару ${name}`}
+                          >
+                            Расход
+                          </button>
+                        ) : (
+                          <span className="text-xs text-muted/50">—</span>
+                        )}
                       </td>
                     </tr>
                   );
@@ -1245,5 +1330,21 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
 export const CompanyWarehouseMarkedStockPage = () => <CompanyWarehouseStock section="marked" />;
 export const CompanyWarehouseOutgoingMarkedStockPage = () => <CompanyWarehouseStock section="outgoing_marked" />;
 export const CompanyWarehouseUnmarkedStockPage = () => <CompanyWarehouseStock section="unmarked" />;
+
+/** При открытии склада без пути — на остатки с маркировкой или на карточку склада, если маркировка выключена в тарифе. */
+export const CompanyWarehouseStockHomeRedirect = () => {
+  const { warehouseId } = useParams();
+  const { activeContext } = useAuth();
+  const organizationId = activeContext?.type === "organization" ? activeContext.organizationId : null;
+  const { canUseMarking, loading } = useOrganizationTariffFeatures(organizationId);
+
+  if (loading) {
+    return <p className="text-sm text-muted/75 py-6">Загрузка…</p>;
+  }
+  if (canUseMarking) {
+    return <Navigate to="marked" replace />;
+  }
+  return <Navigate to="unmarked" replace />;
+};
 
 export default CompanyWarehouseStock;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { authFetch } from "../../api/client";
 import { formatPhoneDisplay, getPhoneDigits, PHONE_PLACEHOLDER } from "../../utils/phone";
 
@@ -625,6 +625,14 @@ const AdminCompanySettings = () => {
         <h1 className="text-2xl font-semibold text-muted">
           {organization.name || "—"}
         </h1>
+        {organization?.subscription?.tariff_can_pos ? (
+          <Link
+            to={`/panel/companies/${companyId}/pos-shifts`}
+            className="px-4 py-2 rounded-lg border border-primary text-primary text-sm font-medium hover:bg-primary/5 transition"
+          >
+            Смены POS
+          </Link>
+        ) : null}
       </div>
 
       <nav className="flex flex-wrap gap-1 border-b border-border" aria-label="Вкладки">

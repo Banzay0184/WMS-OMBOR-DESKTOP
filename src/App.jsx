@@ -10,6 +10,7 @@ import {
   CompanyWarehouseMarkedStockPage,
   CompanyWarehouseOutgoingMarkedStockPage,
   CompanyWarehouseUnmarkedStockPage,
+  CompanyWarehouseStockHomeRedirect,
 } from "./components/company/CompanyWarehouseStock";
 import CompanySettings from "./components/company/CompanySettings";
 import CompanySuppliers from "./components/company/CompanySuppliers";
@@ -30,12 +31,20 @@ import AdminUsers from "./components/admin/AdminUsers";
 import AdminSubscriptions from "./components/admin/AdminSubscriptions";
 import AdminAudit from "./components/admin/AdminAudit";
 import AdminSettings from "./components/admin/AdminSettings";
+import AdminPosShifts from "./components/admin/AdminPosShifts";
+import POSLayout from "./components/pos/POSLayout";
+import POSPage from "./components/pos/POSPage";
+import POSSalesHistory from "./components/pos/POSSalesHistory";
+import POSCustomers from "./components/pos/POSCustomers";
+import POSZReport from "./components/pos/POSZReport";
+import POSPrinterSettings from "./components/pos/POSPrinterSettings";
 import { useAuth } from "./context/AuthContext";
 
 const RedirectByRole = () => {
   const { activeContext } = useAuth();
   if (activeContext?.type === "platform") return <Navigate to="/panel" replace />;
   if (activeContext?.type === "organization") return <Navigate to="/app" replace />;
+  if (activeContext?.type === "pos") return <Navigate to="/pos" replace />;
   return <Navigate to="/select-context" replace />;
 };
 
@@ -46,6 +55,7 @@ const CatchAllRedirect = () => {
   if (!isAuthenticated) return <Navigate to="/" replace />;
   if (activeContext?.type === "platform") return <Navigate to="/panel" replace />;
   if (activeContext?.type === "organization") return <Navigate to="/app" replace />;
+  if (activeContext?.type === "pos") return <Navigate to="/pos" replace />;
   return <Navigate to="/select-context" replace />;
 };
 
@@ -84,7 +94,7 @@ function App() {
           <Route path="warehouses" element={<CompanyWarehouses />} />
           <Route path="warehouses/:warehouseId/receipt" element={<WarehouseReceipt />} />
           <Route path="warehouses/:warehouseId/outgoing" element={<WarehouseOutgoing />} />
-          <Route path="warehouses/:warehouseId" element={<Navigate to="marked" replace />} />
+          <Route path="warehouses/:warehouseId" element={<CompanyWarehouseStockHomeRedirect />} />
           <Route path="warehouses/:warehouseId/marked" element={<CompanyWarehouseMarkedStockPage />} />
           <Route path="warehouses/:warehouseId/outgoing-marked" element={<CompanyWarehouseOutgoingMarkedStockPage />} />
           <Route path="warehouses/:warehouseId/unmarked" element={<CompanyWarehouseUnmarkedStockPage />} />
@@ -108,10 +118,25 @@ function App() {
           <Route path="companies" element={<AdminCompanies />} />
           <Route path="companies/archive" element={<AdminCompanies />} />
           <Route path="companies/:companyId" element={<AdminCompanySettings />} />
+          <Route path="companies/:companyId/pos-shifts" element={<AdminPosShifts />} />
           <Route path="users" element={<AdminUsers />} />
           <Route path="subscriptions" element={<AdminSubscriptions />} />
           <Route path="audit" element={<AdminAudit />} />
           <Route path="settings" element={<AdminSettings />} />
+        </Route>
+        <Route
+          path="/pos"
+          element={
+            <ProtectedRoute requireContext="pos">
+              <POSLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<POSPage />} />
+          <Route path="history" element={<POSSalesHistory />} />
+          <Route path="shift" element={<POSZReport />} />
+          <Route path="customers" element={<POSCustomers />} />
+          <Route path="settings" element={<POSPrinterSettings />} />
         </Route>
         <Route
           path="/dashboard"

@@ -2,6 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { authFetch } from "../../api/client";
 import { getImageUrl } from "../../config";
+import { useOrganizationTariffFeatures } from "../../utils/useOrganizationTariffFeatures";
+
+const buildProductsSubtitle = ({ canUseIkpu, canUseUpc }) => {
+  const parts = ["наименование", "ед. изм."];
+  if (canUseIkpu) parts.splice(1, 0, "ИКПУ");
+  if (canUseUpc) parts.splice(canUseIkpu ? 2 : 1, 0, "UPC");
+  return `Справочник номенклатуры (${parts.join(", ")}) для накладных.`;
+};
 
 const INPUT_CLASS =
   "w-full px-4 py-2.5 rounded-lg border border-border bg-white text-muted placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition";
@@ -35,7 +43,8 @@ const CompanyProducts = () => {
 
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
-  const [canUseUpc, setCanUseUpc] = useState(false);
+
+  const { canUseUpc, canUseInvoiceIkpu } = useOrganizationTariffFeatures(organizationId);
 
   const loadProducts = useCallback(async () => {
     if (!organizationId) return;
@@ -66,32 +75,14 @@ const CompanyProducts = () => {
     }
   }, [organizationId, markForbiddenAppPage]);
 
-  const loadOrganizationFeatures = useCallback(async () => {
-    if (!organizationId) return;
-    try {
-      const res = await authFetch(`platform/organizations/${organizationId}/`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setCanUseUpc(false);
-        return;
-      }
-      setCanUseUpc(data?.subscription?.tariff_can_upc === true);
-    } catch {
-      setCanUseUpc(false);
-    }
-  }, [organizationId]);
-
   useEffect(() => {
     if (organizationId) {
       loadProducts();
-      loadOrganizationFeatures();
-    }
-    else {
+    } else {
       setProducts([]);
-      setCanUseUpc(false);
       setLoading(false);
     }
-  }, [organizationId, loadProducts, loadOrganizationFeatures]);
+  }, [organizationId, loadProducts]);
 
   const resetModal = useCallback(() => {
     setModalImagePreviewUrl((prev) => {
@@ -183,12 +174,12 @@ const CompanyProducts = () => {
       return;
     }
 
-    const ikpuDigits = normalizeIkpu(modalIkpu);
-    if (ikpuDigits && ikpuDigits.length !== 17) {
+    const ikpuDigits = canUseInvoiceIkpu ? normalizeIkpu(modalIkpu) : "";
+    if (canUseInvoiceIkpu && ikpuDigits && ikpuDigits.length !== 17) {
       setModalError("ИКПУ: ровно 17 цифр или оставьте пустым.");
       return;
     }
-    const upc = (modalUpc || "").trim();
+    const upc = canUseUpc ? (modalUpc || "").trim() : "";
 
     const unit = modalUnit.trim() || "шт";
 
@@ -205,7 +196,7 @@ const CompanyProducts = () => {
               body: (() => {
                 const fd = new FormData();
                 fd.append("name", nextName);
-                fd.append("ikpu_code", ikpuDigits);
+                if (canUseInvoiceIkpu) fd.append("ikpu_code", ikpuDigits);
                 if (canUseUpc) fd.append("upc", upc);
                 fd.append("unit", unit);
                 fd.append("image", modalImageFile);
@@ -216,7 +207,7 @@ const CompanyProducts = () => {
               method: "POST",
               body: JSON.stringify({
                 name: nextName,
-                ikpu_code: ikpuDigits,
+                ...(canUseInvoiceIkpu ? { ikpu_code: ikpuDigits } : {}),
                 ...(canUseUpc ? { upc } : {}),
                 unit,
               }),
@@ -240,7 +231,7 @@ const CompanyProducts = () => {
               body: (() => {
                 const fd = new FormData();
                 fd.append("name", nextName);
-                fd.append("ikpu_code", ikpuDigits);
+                if (canUseInvoiceIkpu) fd.append("ikpu_code", ikpuDigits);
                 if (canUseUpc) fd.append("upc", upc);
                 fd.append("unit", unit);
                 fd.append("image", modalImageFile);
@@ -251,7 +242,7 @@ const CompanyProducts = () => {
               method: "PATCH",
               body: JSON.stringify({
                 name: nextName,
-                ikpu_code: ikpuDigits,
+                ...(canUseInvoiceIkpu ? { ikpu_code: ikpuDigits } : {}),
                 ...(canUseUpc ? { upc } : {}),
                 unit,
               }),
@@ -334,7 +325,9 @@ const CompanyProducts = () => {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-muted">Товары</h1>
-          <p className="text-muted text-sm mt-1">Справочник номенклатуры (наименование, ИКПУ, UPC, ед. изм.) для накладных.</p>
+          <p className="text-muted text-sm mt-1">
+            {buildProductsSubtitle({ canUseIkpu: canUseInvoiceIkpu, canUseUpc })}
+          </p>
         </div>
 
         <button
@@ -366,7 +359,9 @@ const CompanyProducts = () => {
                 <tr className="border-b border-border bg-secondary/50">
                   <th className="px-4 py-3 text-sm font-medium text-muted w-24">Фото</th>
                   <th className="px-4 py-3 text-sm font-medium text-muted">Наименование</th>
-                  <th className="px-4 py-3 text-sm font-medium text-muted">ИКПУ</th>
+                  {canUseInvoiceIkpu ? (
+                    <th className="px-4 py-3 text-sm font-medium text-muted">ИКПУ</th>
+                  ) : null}
                   {canUseUpc ? (
                     <th className="px-4 py-3 text-sm font-medium text-muted">UPC</th>
                   ) : null}
@@ -390,7 +385,9 @@ const CompanyProducts = () => {
                       )}
                     </td>
                     <td className="px-4 py-3 text-muted">{p.name ?? "—"}</td>
-                    <td className="px-4 py-3 text-muted font-mono text-sm">{p.ikpu_code?.trim() ? p.ikpu_code : "—"}</td>
+                    {canUseInvoiceIkpu ? (
+                      <td className="px-4 py-3 text-muted font-mono text-sm">{p.ikpu_code?.trim() ? p.ikpu_code : "—"}</td>
+                    ) : null}
                     {canUseUpc ? (
                       <td className="px-4 py-3 text-muted font-mono text-sm">{p.upc?.trim() ? p.upc : "—"}</td>
                     ) : null}
@@ -455,23 +452,25 @@ const CompanyProducts = () => {
                 />
               </div>
 
-              <div>
-                <label htmlFor="product-ikpu" className={LABEL_CLASS}>
-                  ИКПУ (необязательно)
-                </label>
-                <input
-                  id="product-ikpu"
-                  type="text"
-                  inputMode="numeric"
-                  value={modalIkpu}
-                  disabled={modalLoading}
-                  onChange={(e) => setModalIkpu(e.target.value)}
-                  className={INPUT_CLASS}
-                  placeholder="17 цифр"
-                  aria-label="ИКПУ — 17 цифр или пусто"
-                />
-                <p className="text-xs text-muted mt-1">Не пустой ИКПУ должен содержать 17 цифр; уникален в организации.</p>
-              </div>
+              {canUseInvoiceIkpu ? (
+                <div>
+                  <label htmlFor="product-ikpu" className={LABEL_CLASS}>
+                    ИКПУ (необязательно)
+                  </label>
+                  <input
+                    id="product-ikpu"
+                    type="text"
+                    inputMode="numeric"
+                    value={modalIkpu}
+                    disabled={modalLoading}
+                    onChange={(e) => setModalIkpu(e.target.value)}
+                    className={INPUT_CLASS}
+                    placeholder="17 цифр"
+                    aria-label="ИКПУ — 17 цифр или пусто"
+                  />
+                  <p className="text-xs text-muted mt-1">Не пустой ИКПУ должен содержать 17 цифр; уникален в организации.</p>
+                </div>
+              ) : null}
 
               {canUseUpc ? (
                 <div>
@@ -489,11 +488,7 @@ const CompanyProducts = () => {
                     aria-label="UPC код товара"
                   />
                 </div>
-              ) : (
-                <p className="text-xs text-muted">
-                  Поле UPC отключено в текущем тарифе компании.
-                </p>
-              )}
+              ) : null}
 
               <div>
                 <label htmlFor="product-unit" className={LABEL_CLASS}>

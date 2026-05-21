@@ -422,6 +422,50 @@ const MoneyField = ({ id, value, onCommit, className, ariaLabel, placeholder }) 
   />
 );
 
+/**
+ * Компактный переключатель валюты конкретной строки.
+ * Показывается только если документ ведётся в иностранной валюте: пользователю
+ * нужно явно сказать «эта позиция уже в сумах», чтобы её не пересчитывали по курсу.
+ */
+const LineCurrencyToggle = ({ rowId, currentCode, docCode, baseCode, onChange }) => {
+  const docActive = currentCode === docCode;
+  const baseActive = currentCode === baseCode;
+  const btnBase =
+    "px-2 py-1 text-[11px] font-semibold tracking-wide rounded-md transition focus:outline-none focus:ring-2 focus:ring-primary/30";
+  const docBtn = docActive
+    ? "bg-primary text-white shadow-sm"
+    : "bg-white text-muted hover:bg-stone-100";
+  const baseBtn = baseActive
+    ? "bg-primary text-white shadow-sm"
+    : "bg-white text-muted hover:bg-stone-100";
+  return (
+    <div
+      className="mt-1 inline-flex items-center gap-1 p-0.5 rounded-lg border border-border bg-secondary/40"
+      role="group"
+      aria-label={`Валюта строки ${rowId}`}
+    >
+      <button
+        type="button"
+        onClick={() => onChange(docCode)}
+        className={`${btnBase} ${docBtn}`}
+        aria-pressed={docActive}
+        aria-label={`Цена в ${docCode}`}
+      >
+        {docCode}
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange(baseCode)}
+        className={`${btnBase} ${baseBtn}`}
+        aria-pressed={baseActive}
+        aria-label={`Цена в ${baseCode}`}
+      >
+        {baseCode}
+      </button>
+    </div>
+  );
+};
+
 const resizeMarkingsArray = (markings, targetLength) => {
   const prev = Array.isArray(markings) ? markings : [];
   const len = Math.max(0, Math.min(MAX_MARKING_SLOTS, Math.floor(Number(targetLength)) || 0));
@@ -514,6 +558,8 @@ const WarehouseReceipt = () => {
       unit: "шт",
       quantity: 1,
       unitPrice: 0,
+      salePrice: 0,
+      lineCurrencyCode: "",
       ikpu: "",
       upc: "",
       catalogProductId: null,
@@ -525,6 +571,16 @@ const WarehouseReceipt = () => {
   const [markingsRowsCollapsed, setMarkingsRowsCollapsed] = useState({});
 
   const [vatMode, setVatMode] = useState("without");
+
+  // Функция «Обмен валют»: список валют, выбранный код, источник курса (cbu|manual),
+  // курс к UZS, дата курса. Если currencyCode == базовая (UZS) — курс не применяется.
+  const [currencies, setCurrencies] = useState([]);
+  const [currencyCode, setCurrencyCode] = useState("UZS");
+  const [exchangeRateSource, setExchangeRateSource] = useState("cbu");
+  const [exchangeRate, setExchangeRate] = useState("");
+  const [exchangeRateDate, setExchangeRateDate] = useState("");
+  const [exchangeRateLoading, setExchangeRateLoading] = useState(false);
+  const [exchangeRateError, setExchangeRateError] = useState("");
 
   const [catalogProducts, setCatalogProducts] = useState([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -548,6 +604,8 @@ const WarehouseReceipt = () => {
 
   const [manualTotalEnabled, setManualTotalEnabled] = useState(false);
   const [manualTotalValue, setManualTotalValue] = useState("");
+  const [manualTotalDocEnabled, setManualTotalDocEnabled] = useState(false);
+  const [manualTotalDocValue, setManualTotalDocValue] = useState("");
 
   const [buyerProfile, setBuyerProfile] = useState(null);
 
@@ -638,6 +696,26 @@ const WarehouseReceipt = () => {
             : ""
         );
         setVatMode(inv.vat_mode === "with" ? "with" : "without");
+        if (typeof inv.currency_code === "string" && inv.currency_code) {
+          setCurrencyCode(inv.currency_code);
+        } else {
+          setCurrencyCode("UZS");
+        }
+        if (inv.exchange_rate_source === "cbu" || inv.exchange_rate_source === "manual") {
+          setExchangeRateSource(inv.exchange_rate_source);
+        } else {
+          setExchangeRateSource("cbu");
+        }
+        if (inv.exchange_rate != null && inv.exchange_rate !== "") {
+          setExchangeRate(String(inv.exchange_rate));
+        } else {
+          setExchangeRate("");
+        }
+        if (typeof inv.exchange_rate_date === "string" && inv.exchange_rate_date.length >= 10) {
+          setExchangeRateDate(inv.exchange_rate_date.slice(0, 10));
+        } else {
+          setExchangeRateDate("");
+        }
         setManualTotalEnabled(inv.manual_total_enabled === true);
         if (inv.manual_total_value != null && inv.manual_total_value !== "") {
           setManualTotalValue(String(inv.manual_total_value));
@@ -661,9 +739,19 @@ const WarehouseReceipt = () => {
                 unit: (line.unit ?? "шт").trim() || "шт",
                 quantity: qty,
                 unitPrice:
-                  typeof line.unit_price === "number" && Number.isFinite(line.unit_price)
-                    ? line.unit_price
-                    : Number(line.unit_price ?? 0),
+                  line.unit_price_doc != null && Number.isFinite(Number(line.unit_price_doc))
+                    ? Number(line.unit_price_doc)
+                    : typeof line.unit_price === "number" && Number.isFinite(line.unit_price)
+                      ? line.unit_price
+                      : Number(line.unit_price ?? 0),
+                salePrice:
+                  line.sale_price != null && Number.isFinite(Number(line.sale_price))
+                    ? Number(line.sale_price)
+                    : 0,
+                lineCurrencyCode:
+                  typeof line.unit_price_currency_code === "string" && line.unit_price_currency_code
+                    ? line.unit_price_currency_code
+                    : "",
                 ikpu: line.ikpu_code ?? "",
                 upc: line.upc ?? "",
                 catalogProductId: line.catalog_product_id != null ? line.catalog_product_id : null,
@@ -671,6 +759,35 @@ const WarehouseReceipt = () => {
               };
             })
           );
+        }
+        const docCode = (inv.currency_code || "").trim();
+        const invRate = Number(inv.exchange_rate);
+        const isForeignInv =
+          !!docCode && docCode !== "UZS" && Number.isFinite(invRate) && invRate > 0;
+        if (isForeignInv && rawLines.length > 0) {
+          let calcDocWithout = 0;
+          let calcDocVat = 0;
+          for (const line of rawLines) {
+            const lineCode = (line.unit_price_currency_code || docCode).trim();
+            if (lineCode !== docCode) continue;
+            calcDocWithout += Number(line.amount_without_vat_doc ?? 0);
+            calcDocVat += Number(line.vat_amount_doc ?? 0);
+          }
+          const calcDocWith =
+            inv.vat_mode === "with"
+              ? roundMoney(calcDocWithout + calcDocVat)
+              : roundMoney(calcDocWithout);
+          const savedDocWith = Number(inv.total_with_vat_doc ?? inv.total_without_vat_doc ?? 0);
+          if (Math.abs(calcDocWith - savedDocWith) > 0.02) {
+            setManualTotalDocEnabled(true);
+            setManualTotalDocValue(String(savedDocWith));
+          } else {
+            setManualTotalDocEnabled(false);
+            setManualTotalDocValue("");
+          }
+        } else {
+          setManualTotalDocEnabled(false);
+          setManualTotalDocValue("");
         }
         setShowDraftBanner(false);
       } catch (err) {
@@ -687,6 +804,109 @@ const WarehouseReceipt = () => {
 
   const canUseMarking = buyerProfile?.subscription?.tariff_can_marking === true;
   const canUseUpc = buyerProfile?.subscription?.tariff_can_upc === true;
+  const canUseCurrency = buyerProfile?.subscription?.tariff_can_currency === true;
+  const canUseInvoiceContract =
+    buyerProfile?.subscription?.tariff_can_invoice_contract === true;
+  const canUseInvoiceAccount = buyerProfile?.subscription?.tariff_can_invoice_account === true;
+  const canUseInvoiceIkpu = buyerProfile?.subscription?.tariff_can_invoice_ikpu === true;
+
+  const baseCurrencyCode = useMemo(() => {
+    const baseRow = currencies.find((c) => c.is_base);
+    return baseRow?.code ?? "UZS";
+  }, [currencies]);
+
+  const selectedCurrencyMeta = useMemo(
+    () => currencies.find((c) => c.code === currencyCode) ?? null,
+    [currencies, currencyCode]
+  );
+
+  const isForeignCurrency =
+    canUseCurrency && !!currencyCode && currencyCode !== baseCurrencyCode;
+
+  const exchangeRateNumber = useMemo(() => {
+    const n = Number(String(exchangeRate).replace(",", "."));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }, [exchangeRate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadCurrencies = async () => {
+      if (!canUseCurrency) {
+        setCurrencies([]);
+        return;
+      }
+      try {
+        const res = await authFetch("platform/currencies/");
+        const data = await res.json().catch(() => []);
+        if (cancelled) return;
+        if (res.ok && Array.isArray(data)) setCurrencies(data);
+        else setCurrencies([]);
+      } catch {
+        if (!cancelled) setCurrencies([]);
+      }
+    };
+    void loadCurrencies();
+    return () => {
+      cancelled = true;
+    };
+  }, [canUseCurrency]);
+
+  useEffect(() => {
+    if (!canUseCurrency) {
+      setCurrencyCode("UZS");
+      setExchangeRate("");
+      setExchangeRateDate("");
+      setExchangeRateError("");
+      return;
+    }
+    if (!currencyCode || currencyCode === baseCurrencyCode) {
+      setExchangeRate("");
+      setExchangeRateDate("");
+      setExchangeRateError("");
+    }
+  }, [canUseCurrency, currencyCode, baseCurrencyCode]);
+
+  useEffect(() => {
+    if (!isForeignCurrency || exchangeRateSource !== "cbu" || !organizationId) return;
+    const dateForRate = invoiceDate || new Date().toISOString().slice(0, 10);
+    let cancelled = false;
+    const fetchRate = async () => {
+      setExchangeRateLoading(true);
+      setExchangeRateError("");
+      try {
+        const params = new URLSearchParams({
+          currency: currencyCode,
+          date: dateForRate,
+          source: "cbu",
+        });
+        const res = await authFetch(
+          `platform/organizations/${organizationId}/exchange-rates/?${params.toString()}`
+        );
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!res.ok) {
+          setExchangeRateError(data.detail ?? "Курс ЦБ недоступен.");
+          setExchangeRate("");
+          setExchangeRateDate("");
+          return;
+        }
+        setExchangeRate(String(data.rate ?? ""));
+        setExchangeRateDate(typeof data.rate_date === "string" ? data.rate_date : dateForRate);
+      } catch (err) {
+        if (!cancelled) {
+          setExchangeRateError(err.message ?? "Ошибка сети");
+          setExchangeRate("");
+          setExchangeRateDate("");
+        }
+      } finally {
+        if (!cancelled) setExchangeRateLoading(false);
+      }
+    };
+    void fetchRate();
+    return () => {
+      cancelled = true;
+    };
+  }, [isForeignCurrency, exchangeRateSource, currencyCode, invoiceDate, organizationId]);
 
   useEffect(() => {
     if (!buyerProfile) return;
@@ -700,6 +920,33 @@ const WarehouseReceipt = () => {
     if (canUseUpc) return;
     setItems((prev) => prev.map((it) => ({ ...it, upc: "" })));
   }, [canUseUpc, buyerProfile]);
+
+  useEffect(() => {
+    if (!buyerProfile) return;
+    if (canUseInvoiceContract) return;
+    setContractNumber("");
+    setContractDate("");
+  }, [canUseInvoiceContract, buyerProfile]);
+
+  useEffect(() => {
+    if (!buyerProfile) return;
+    if (canUseInvoiceAccount) return;
+    setInvoiceNumber("");
+    setInvoiceDate("");
+  }, [canUseInvoiceAccount, buyerProfile]);
+
+  useEffect(() => {
+    if (!buyerProfile) return;
+    if (canUseInvoiceIkpu) return;
+    setItems((prev) =>
+      prev.map((it) => ({
+        ...it,
+        ikpuName: "",
+        ikpu: "",
+        catalogProductId: null,
+      }))
+    );
+  }, [canUseInvoiceIkpu, buyerProfile]);
 
   const loadSuppliers = useCallback(async () => {
     if (!organizationId) return;
@@ -972,37 +1219,124 @@ const WarehouseReceipt = () => {
     }, 0);
   }, [items]);
 
+  /**
+   * Эффективная валюта строки. Если у строки явно ничего не выбрано —
+   * наследуем валюту документа. Если документ в базовой валюте — строка
+   * тоже в базовой. Эта функция нужна и для отображения, и для пересчётов.
+   */
+  const resolveRowCurrencyCode = useCallback(
+    (rowLineCurrencyCode) => {
+      const code = (rowLineCurrencyCode || "").trim();
+      if (code) return code;
+      return (currencyCode || baseCurrencyCode || "UZS").trim();
+    },
+    [currencyCode, baseCurrencyCode]
+  );
+
   const { lineCalculations, totals } = useMemo(() => {
     const lines = items.map((it) => {
       const q = typeof it.quantity === "number" ? it.quantity : Number(it.quantity);
       const p = typeof it.unitPrice === "number" ? it.unitPrice : Number(it.unitPrice);
       const qq = Number.isFinite(q) ? q : 0;
       const pp = Number.isFinite(p) ? p : 0;
+      const rowCurrency = resolveRowCurrencyCode(it.lineCurrencyCode);
+      // Пересчитываем строку в UZS только если её валюта совпадает с валютой
+      // документа (т.е. это «иностранная» строка) и есть курс.
+      const needsConversion =
+        isForeignCurrency && rowCurrency === currencyCode && exchangeRateNumber > 0;
       const amountWithoutVat = roundMoney(qq * pp);
+      const amountWithoutVatBase = needsConversion
+        ? roundMoney(amountWithoutVat * exchangeRateNumber)
+        : amountWithoutVat;
       const vatAmount =
         vatMode === "with"
           ? roundMoney((amountWithoutVat * DEFAULT_VAT_RATE_PERCENT) / 100)
           : 0;
+      const vatAmountBase = needsConversion
+        ? roundMoney(vatAmount * exchangeRateNumber)
+        : vatAmount;
       const amountWithVat = roundMoney(amountWithoutVat + vatAmount);
-      return { amountWithoutVat, vatAmount, amountWithVat };
+      const amountWithVatBase = roundMoney(amountWithoutVatBase + vatAmountBase);
+      return {
+        amountWithoutVat,
+        vatAmount,
+        amountWithVat,
+        amountWithoutVatBase,
+        vatAmountBase,
+        amountWithVatBase,
+        rowCurrency,
+      };
     });
-    const totalWithoutVat = roundMoney(lines.reduce((acc, row) => acc + row.amountWithoutVat, 0));
-    const totalVat = roundMoney(lines.reduce((acc, row) => acc + row.vatAmount, 0));
-    const totalWithVat = roundMoney(lines.reduce((acc, row) => acc + row.amountWithVat, 0));
+    // Итоги по валюте документа (как сейчас отображается): только строки,
+    // которые в этой же валюте. Сумы-строки в этот итог не попадают.
+    const inDocCurrency = lines.filter((l) => l.rowCurrency === currencyCode);
+    const totalWithoutVat = roundMoney(inDocCurrency.reduce((acc, row) => acc + row.amountWithoutVat, 0));
+    const totalVat = roundMoney(inDocCurrency.reduce((acc, row) => acc + row.vatAmount, 0));
+    const totalWithVat = roundMoney(inDocCurrency.reduce((acc, row) => acc + row.amountWithVat, 0));
+
+    // Универсальные итоги в UZS — сумма всех строк, переведённых в базу.
+    const totalWithoutVatBase = roundMoney(lines.reduce((acc, row) => acc + row.amountWithoutVatBase, 0));
+    const totalVatBase = roundMoney(lines.reduce((acc, row) => acc + row.vatAmountBase, 0));
+    const totalWithVatBase = roundMoney(lines.reduce((acc, row) => acc + row.amountWithVatBase, 0));
+
     return {
       lineCalculations: lines,
-      totals: { totalWithoutVat, totalVat, totalWithVat },
+      totals: {
+        totalWithoutVat,
+        totalVat,
+        totalWithVat,
+        totalWithoutVatBase,
+        totalVatBase,
+        totalWithVatBase,
+      },
     };
-  }, [items, vatMode]);
+  }, [items, vatMode, isForeignCurrency, currencyCode, exchangeRateNumber, resolveRowCurrencyCode]);
+
+  // true, если в смешанном валютном приходе хотя бы одна строка отмечена базовой валютой.
+  const hasMixedLineCurrencies = useMemo(() => {
+    if (!isForeignCurrency) return false;
+    return lineCalculations.some((l) => l.rowCurrency === baseCurrencyCode);
+  }, [isForeignCurrency, baseCurrencyCode, lineCalculations]);
 
   const manualTotalParsed = useMemo(() => parseMoneyInput(manualTotalValue), [manualTotalValue]);
+  const manualTotalDocParsed = useMemo(
+    () => parseMoneyInput(manualTotalDocValue),
+    [manualTotalDocValue]
+  );
 
   const moneyFmt = useMemo(() => new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), []);
 
+  // Основной итог для отображения и ручного ввода: при валютном документе — всегда в
+  // базовой валюте (сум), т.к. склад учитывает в сумах; USD — только справочно.
+  const primaryTotals = useMemo(() => {
+    if (!isForeignCurrency) {
+      return {
+        totalWithoutVat: totals.totalWithoutVat,
+        totalVat: totals.totalVat,
+        totalWithVat: totals.totalWithVat,
+      };
+    }
+    return {
+      totalWithoutVat: totals.totalWithoutVatBase,
+      totalVat: totals.totalVatBase,
+      totalWithVat: totals.totalWithVatBase,
+    };
+  }, [isForeignCurrency, totals]);
+
+  const docCurrencyTotals = useMemo(() => {
+    if (!isForeignCurrency) return null;
+    return {
+      totalWithoutVat: totals.totalWithoutVat,
+      totalVat: totals.totalVat,
+      totalWithVat: totals.totalWithVat,
+    };
+  }, [isForeignCurrency, totals]);
+
   const footerTotals = useMemo(() => {
     if (!manualTotalEnabled || manualTotalParsed === null) {
-      return { display: totals, calculatedLabel: null };
+      return { display: primaryTotals, calculatedLabel: null };
     }
+    const currencySuffix = isForeignCurrency ? ` ${baseCurrencyCode}` : "";
     if (vatMode === "without") {
       return {
         display: {
@@ -1010,18 +1344,59 @@ const WarehouseReceipt = () => {
           totalVat: 0,
           totalWithVat: manualTotalParsed,
         },
-        calculatedLabel: `Сумма по позициям (расчёт): ${moneyFmt.format(totals.totalWithoutVat)}`,
+        calculatedLabel: `Сумма по позициям (расчёт): ${moneyFmt.format(primaryTotals.totalWithoutVat)}${currencySuffix}`,
       };
     }
     return {
       display: {
-        totalWithoutVat: totals.totalWithoutVat,
-        totalVat: totals.totalVat,
+        totalWithoutVat: primaryTotals.totalWithoutVat,
+        totalVat: primaryTotals.totalVat,
         totalWithVat: manualTotalParsed,
       },
-      calculatedLabel: `По позициям с НДС (расчёт): ${moneyFmt.format(totals.totalWithVat)}`,
+      calculatedLabel: `По позициям с НДС (расчёт): ${moneyFmt.format(primaryTotals.totalWithVat)}${currencySuffix}`,
     };
-  }, [manualTotalEnabled, manualTotalParsed, totals, vatMode, moneyFmt]);
+  }, [
+    manualTotalEnabled,
+    manualTotalParsed,
+    primaryTotals,
+    vatMode,
+    moneyFmt,
+    isForeignCurrency,
+    baseCurrencyCode,
+  ]);
+
+  const footerDocTotals = useMemo(() => {
+    if (!docCurrencyTotals) return null;
+    if (!manualTotalDocEnabled || manualTotalDocParsed === null) {
+      return { display: docCurrencyTotals, calculatedLabel: null };
+    }
+    const currencySuffix = ` ${currencyCode}`;
+    if (vatMode === "without") {
+      return {
+        display: {
+          totalWithoutVat: manualTotalDocParsed,
+          totalVat: 0,
+          totalWithVat: manualTotalDocParsed,
+        },
+        calculatedLabel: `Сумма по позициям (расчёт): ${moneyFmt.format(docCurrencyTotals.totalWithoutVat)}${currencySuffix}`,
+      };
+    }
+    return {
+      display: {
+        totalWithoutVat: docCurrencyTotals.totalWithoutVat,
+        totalVat: docCurrencyTotals.totalVat,
+        totalWithVat: manualTotalDocParsed,
+      },
+      calculatedLabel: `По позициям с НДС (расчёт): ${moneyFmt.format(docCurrencyTotals.totalWithVat)}${currencySuffix}`,
+    };
+  }, [
+    docCurrencyTotals,
+    manualTotalDocEnabled,
+    manualTotalDocParsed,
+    vatMode,
+    moneyFmt,
+    currencyCode,
+  ]);
 
   const handleAddItem = () => {
     const nextIndex = items.length + 1;
@@ -1035,6 +1410,8 @@ const WarehouseReceipt = () => {
         unit: "шт",
         quantity: 0,
         unitPrice: 0,
+        salePrice: 0,
+        lineCurrencyCode: "",
         ikpu: "",
         upc: "",
         catalogProductId: null,
@@ -1071,6 +1448,11 @@ const WarehouseReceipt = () => {
           const raw = typeof patch.unitPrice === "number" ? patch.unitPrice : Number(patch.unitPrice);
           const p = Number.isFinite(raw) ? roundMoney(raw) : 0;
           next.unitPrice = Math.max(0, p);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "salePrice")) {
+          const raw = typeof patch.salePrice === "number" ? patch.salePrice : Number(patch.salePrice);
+          const p = Number.isFinite(raw) ? roundMoney(raw) : 0;
+          next.salePrice = Math.max(0, p);
         }
         return next;
       })
@@ -1114,6 +1496,10 @@ const WarehouseReceipt = () => {
               ikpu: (p.ikpu_code ?? "").trim(),
               upc: (p.upc ?? "").trim(),
               catalogProductId: p.id ?? null,
+              salePrice:
+                p.sale_price != null && Number.isFinite(Number(p.sale_price))
+                  ? Number(p.sale_price)
+                  : it.salePrice ?? 0,
         };
         if (field === "ourName") {
           return { ...next, name: catalogName };
@@ -1256,7 +1642,10 @@ const WarehouseReceipt = () => {
       let addedCount = 0;
       const errs = [];
       const idByRowId = new Map();
-      let supplierWasCreated = false;
+      let supplierIdForPayload =
+        supplierSource === "list" && selectedSupplierId
+          ? Number(selectedSupplierId)
+          : null;
 
       if (organizationId) {
         if (supplierSource === "manual" && !suppliersForbidden) {
@@ -1265,31 +1654,38 @@ const WarehouseReceipt = () => {
           const hasEnoughSupplierData = !!nextName && !!normalizedInn;
 
           if (hasEnoughSupplierData) {
-            setSaveSupplierLoading(true);
-            try {
-              const res = await authFetch(`platform/organizations/${organizationId}/suppliers/`, {
-                method: "POST",
-                body: JSON.stringify({
-                  name: nextName,
-                  inn: normalizedInn,
-                  phone: getPhoneDigits(supplierPhone),
-                  address: supplierAddress.trim(),
-                }),
-              });
-              const data = await res.json().catch(() => ({}));
-              if (!res.ok) {
-                if (res.status === 403) {
-                  setSuppliersForbidden(true);
-                  markForbiddenAppPage?.(organizationId, "suppliers");
-                  setSaveSupplierError("Нет прав на создание поставщика.");
-                } else {
-                  setSaveSupplierError(data.detail ?? data.inn?.[0] ?? "Ошибка сохранения поставщика");
+            const existingSupplier = suppliers.find(
+              (s) => normalizeInn(s?.inn) === normalizedInn
+            );
+            if (existingSupplier?.id != null) {
+              supplierIdForPayload = Number(existingSupplier.id);
+            } else {
+              setSaveSupplierLoading(true);
+              try {
+                const res = await authFetch(`platform/organizations/${organizationId}/suppliers/`, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    name: nextName,
+                    inn: normalizedInn,
+                    phone: getPhoneDigits(supplierPhone),
+                    address: supplierAddress.trim(),
+                  }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                  if (res.status === 403) {
+                    setSuppliersForbidden(true);
+                    markForbiddenAppPage?.(organizationId, "suppliers");
+                    setSaveSupplierError("Нет прав на создание поставщика.");
+                  } else {
+                    setSaveSupplierError(data.detail ?? data.inn?.[0] ?? "Ошибка сохранения поставщика");
+                  }
+                  return;
                 }
-              } else {
-                supplierWasCreated = true;
                 await loadSuppliers();
                 const newId = data?.id;
                 if (newId != null) {
+                  supplierIdForPayload = Number(newId);
                   setSupplierSource("list");
                   setSelectedSupplierId(String(newId));
                   setSupplierName(data.name ?? nextName);
@@ -1305,11 +1701,12 @@ const WarehouseReceipt = () => {
                   );
                 }
                 setSaveSupplierMessage("Поставщик добавлен в справочник при сохранении счёт‑фактуры.");
+              } catch (err) {
+                setSaveSupplierError(err.message ?? "Ошибка сети");
+                return;
+              } finally {
+                setSaveSupplierLoading(false);
               }
-            } catch (err) {
-              setSaveSupplierError(err.message ?? "Ошибка сети");
-            } finally {
-              setSaveSupplierLoading(false);
             }
           }
         }
@@ -1413,23 +1810,47 @@ const WarehouseReceipt = () => {
         return;
       }
 
-      const linesPayload = items.map((row) => ({
-        catalog_product_id: row.catalogProductId ?? null,
-        our_name: row.name ?? "",
-        ikpu_name: row.ikpuName ?? "",
-        ikpu_code: row.ikpu ?? "",
-        ...(canUseUpc ? { upc: (row.upc || "").trim() } : {}),
-        unit: row.unit ?? "шт",
-        quantity: row.quantity ?? 0,
-        unit_price: row.unitPrice ?? 0,
-        markings: resizeMarkingsArray(row.markings, row.quantity ?? 0).map((m) =>
-          typeof m === "string" ? m : ""
-        ),
-      }));
+      if (isForeignCurrency && exchangeRateNumber <= 0) {
+        setInvoiceSaveError("Укажите корректный курс валюты к UZS.");
+        return;
+      }
+
+      // Курс пересчёта в UZS: 1 при базовой валюте, иначе зафиксированный курс из формы.
+      const ratePayload = isForeignCurrency ? exchangeRateNumber : 1;
+
+      const linesPayload = items.map((row) => {
+        const rowCurrency = resolveRowCurrencyCode(row.lineCurrencyCode);
+        const priceDoc = Number(row.unitPrice ?? 0) || 0;
+        // UZS-цена пересчитывается только для строк, чья валюта совпадает с
+        // валютой документа. «Сумовые» строки внутри валютного прихода идут как есть.
+        const priceUzs =
+          isForeignCurrency && rowCurrency === currencyCode
+            ? priceDoc * ratePayload
+            : priceDoc;
+        return {
+          catalog_product_id: row.catalogProductId ?? null,
+          our_name: row.name ?? "",
+          ikpu_name: row.ikpuName ?? "",
+          ikpu_code: row.ikpu ?? "",
+          ...(canUseUpc ? { upc: (row.upc || "").trim() } : {}),
+          unit: row.unit ?? "шт",
+          quantity: row.quantity ?? 0,
+          unit_price: priceUzs,
+          unit_price_doc: priceDoc,
+          unit_price_currency: rowCurrency,
+          sale_price: Number(row.salePrice ?? 0) > 0 ? Number(row.salePrice) : null,
+          markings: resizeMarkingsArray(row.markings, row.quantity ?? 0).map((m) =>
+            typeof m === "string" ? m : ""
+          ),
+        };
+      });
+
+      const totalsDoc = footerDocTotals?.display ?? docCurrencyTotals ?? footerTotals.display;
+      const totalsBaseFromLines = footerTotals.display;
 
       const payload = {
         warehouse_id: warehouseId ? Number(warehouseId) : null,
-        supplier_id: selectedSupplierId ? Number(selectedSupplierId) : null,
+        supplier_id: supplierIdForPayload,
         supplier_name: supplierName ?? "",
         supplier_inn: supplierInn ?? "",
         supplier_phone: getPhoneDigits(supplierPhone),
@@ -1441,10 +1862,17 @@ const WarehouseReceipt = () => {
         vat_mode: vatMode ?? "without",
         manual_total_enabled: manualTotalEnabled === true,
         manual_total_value: manualTotalEnabled ? manualTotalValue : null,
+        currency: isForeignCurrency ? currencyCode : null,
+        exchange_rate_source: isForeignCurrency ? exchangeRateSource : "",
+        exchange_rate: isForeignCurrency ? ratePayload : null,
+        exchange_rate_date: isForeignCurrency ? exchangeRateDate || invoiceDate || null : null,
         total_quantity: totalQuantity ?? 0,
-        total_without_vat: footerTotals.display.totalWithoutVat ?? 0,
-        total_vat: footerTotals.display.totalVat ?? 0,
-        total_with_vat: footerTotals.display.totalWithVat ?? 0,
+        total_without_vat: totalsBaseFromLines.totalWithoutVat ?? 0,
+        total_vat: totalsBaseFromLines.totalVat ?? 0,
+        total_with_vat: totalsBaseFromLines.totalWithVat ?? 0,
+        total_without_vat_doc: totalsDoc.totalWithoutVat ?? 0,
+        total_vat_doc: totalsDoc.totalVat ?? 0,
+        total_with_vat_doc: totalsDoc.totalWithVat ?? 0,
         lines: linesPayload,
       };
 
@@ -1498,11 +1926,6 @@ const WarehouseReceipt = () => {
         return;
       }
 
-      setInvoiceSaveMessage(
-        isEdit
-          ? `Изменения сохранены (№ ${saved?.id ?? editInvoiceId ?? "—"}).`
-          : `Счёт‑фактура сохранена. ID: ${saved?.id ?? "—"}`
-      );
       try {
         const dk = receiptDraftStorageKey(organizationId, warehouseId);
         if (dk) sessionStorage.removeItem(dk);
@@ -1510,6 +1933,7 @@ const WarehouseReceipt = () => {
         /* ignore */
       }
       setShowDraftBanner(false);
+      navigate("/app/invoices", { replace: true });
     } finally {
       setReceiptSaveLoading(false);
     }
@@ -1571,7 +1995,13 @@ const WarehouseReceipt = () => {
             vatMode,
             manualTotalEnabled,
             manualTotalValue,
+            manualTotalDocEnabled,
+            manualTotalDocValue,
             markingsRowsCollapsed,
+            currencyCode,
+            exchangeRateSource,
+            exchangeRate,
+            exchangeRateDate,
           },
         };
         sessionStorage.setItem(key, JSON.stringify(payload));
@@ -1598,8 +2028,14 @@ const WarehouseReceipt = () => {
     vatMode,
     manualTotalEnabled,
     manualTotalValue,
+    manualTotalDocEnabled,
+    manualTotalDocValue,
     markingsRowsCollapsed,
     editInvoiceId,
+    currencyCode,
+    exchangeRateSource,
+    exchangeRate,
+    exchangeRateDate,
   ]);
 
   const handleRestoreDraft = useCallback(() => {
@@ -1627,6 +2063,14 @@ const WarehouseReceipt = () => {
       if (d.vatMode === "with" || d.vatMode === "without") setVatMode(d.vatMode);
       if (typeof d.manualTotalEnabled === "boolean") setManualTotalEnabled(d.manualTotalEnabled);
       if (typeof d.manualTotalValue === "string") setManualTotalValue(d.manualTotalValue);
+      if (typeof d.manualTotalDocEnabled === "boolean") setManualTotalDocEnabled(d.manualTotalDocEnabled);
+      if (typeof d.manualTotalDocValue === "string") setManualTotalDocValue(d.manualTotalDocValue);
+      if (typeof d.currencyCode === "string" && d.currencyCode) setCurrencyCode(d.currencyCode);
+      if (d.exchangeRateSource === "cbu" || d.exchangeRateSource === "manual") {
+        setExchangeRateSource(d.exchangeRateSource);
+      }
+      if (typeof d.exchangeRate === "string") setExchangeRate(d.exchangeRate);
+      if (typeof d.exchangeRateDate === "string") setExchangeRateDate(d.exchangeRateDate);
       if (d.markingsRowsCollapsed && typeof d.markingsRowsCollapsed === "object") {
         setMarkingsRowsCollapsed(d.markingsRowsCollapsed);
       }
@@ -1639,6 +2083,8 @@ const WarehouseReceipt = () => {
             unit: typeof it.unit === "string" ? it.unit : "шт",
             quantity: typeof it.quantity === "number" && Number.isFinite(it.quantity) ? it.quantity : 0,
             unitPrice: typeof it.unitPrice === "number" && Number.isFinite(it.unitPrice) ? it.unitPrice : 0,
+            salePrice: typeof it.salePrice === "number" && Number.isFinite(it.salePrice) ? it.salePrice : 0,
+            lineCurrencyCode: typeof it.lineCurrencyCode === "string" ? it.lineCurrencyCode : "",
             ikpu: typeof it.ikpu === "string" ? it.ikpu : "",
             upc: typeof it.upc === "string" ? it.upc : "",
             catalogProductId: it.catalogProductId != null ? it.catalogProductId : null,
@@ -1771,6 +2217,33 @@ const WarehouseReceipt = () => {
             </h1>
           </div>
         </header>
+
+        {canUseCurrency && isForeignCurrency ? (
+          <div
+            className="rounded-lg border border-sky-200/90 bg-sky-50/95 px-4 py-3 text-sm text-sky-950 shadow-sm"
+            role="status"
+            aria-live="polite"
+          >
+            <p className="m-0 font-semibold">
+              Пересчёт в {baseCurrencyCode}:{" "}
+              {exchangeRateNumber > 0 ? (
+                <span className="font-mono tabular-nums">
+                  1 {currencyCode} = {exchangeRateNumber.toLocaleString("ru-RU", { maximumFractionDigits: 6 })}{" "}
+                  {baseCurrencyCode}
+                </span>
+              ) : (
+                <span className="text-amber-800">укажите курс в блоке «Валюта документа»</span>
+              )}
+            </p>
+            {exchangeRateNumber > 0 ? (
+              <p className="m-0 mt-1.5 text-xs text-sky-900/85 leading-relaxed">
+                Цены в {currencyCode} в строках ниже показаны с пересчётом в {baseCurrencyCode} (≈ … {baseCurrencyCode}).
+                {exchangeRateDate ? ` Курс на ${formatDateDdMmYyyy(exchangeRateDate)}.` : ""}
+                {exchangeRateSource === "cbu" ? " Источник: ЦБ Узбекистана." : " Источник: вручную."}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {!organizationId ? (
           <p
@@ -2026,79 +2499,85 @@ const WarehouseReceipt = () => {
           </div>
           </div>
         </section>
-
-        <div className="border-t border-border/70">
-          <h2 className={`px-3 py-2.5 ${SECTION_HEADING} bg-neutral-50/90 border-b border-border/60`}>
-            Договор и счёт
-            </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 border-b border-neutral-200/90 md:divide-x md:divide-neutral-200/90">
-            <div className={`${DOC_ROW_GRID_COMPACT} min-w-0`}>
-              <label htmlFor="contract-number" className={DOC_LABEL_CELL}>
-                Номер договора
-              </label>
-              <div className={`${DOC_INPUT_CELL} min-w-0`}>
-                <input
-                  id="contract-number"
-                  type="text"
-                  value={contractNumber}
-                  onChange={(e) => setContractNumber(e.target.value)}
-                  className={DOC_INPUT}
-                  placeholder="—"
-                  aria-label="Номер договора"
-                />
-              </div>
-            </div>
-            <div className={`${DOC_ROW_GRID_COMPACT} min-w-0 border-t border-neutral-200/90 md:border-t-0`}>
-              <label htmlFor="contract-date" className={DOC_LABEL_CELL}>
-                Дата договора
-              </label>
-              <div className={`${DOC_INPUT_CELL} min-w-0`}>
-                <input
-                  id="contract-date"
-                  type="date"
-                  value={contractDate}
-                  onChange={(e) => setContractDate(e.target.value)}
-                  className={DOC_INPUT}
-                  aria-label="Дата договора"
-                />
-              </div>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 border-b border-neutral-200/90 md:divide-x md:divide-neutral-200/90">
-            <div className={`${DOC_ROW_GRID_COMPACT} min-w-0`}>
-              <label htmlFor="invoice-number" className={DOC_LABEL_CELL}>
-                Номер счёта
-              </label>
-              <div className={`${DOC_INPUT_CELL} min-w-0`}>
-                <input
-                  id="invoice-number"
-                  type="text"
-                  value={invoiceNumber}
-                  onChange={(e) => setInvoiceNumber(e.target.value)}
-                  className={DOC_INPUT}
-                  placeholder="—"
-                  aria-label="Номер счёта"
-                />
-              </div>
-            </div>
-            <div className={`${DOC_ROW_GRID_COMPACT} min-w-0 border-t border-neutral-200/90 md:border-t-0`}>
-              <label htmlFor="invoice-date" className={DOC_LABEL_CELL}>
-                Дата счёта
-              </label>
-              <div className={`${DOC_INPUT_CELL} min-w-0`}>
-                <input
-                  id="invoice-date"
-                  type="date"
-                  value={invoiceDate}
-                  onChange={(e) => setInvoiceDate(e.target.value)}
-                  className={DOC_INPUT}
-                  aria-label="Дата счёта"
-                />
-              </div>
-            </div>
-          </div>
-          </div>
         </div>
+
+        {canUseInvoiceContract || canUseInvoiceAccount ? (
+          <div className="border-t border-border/70">
+            <h2 className={`px-3 py-2.5 ${SECTION_HEADING} bg-neutral-50/90 border-b border-border/60`}>
+              Договор и счёт
+            </h2>
+            {canUseInvoiceContract ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 border-b border-neutral-200/90 md:divide-x md:divide-neutral-200/90">
+                <div className={`${DOC_ROW_GRID_COMPACT} min-w-0`}>
+                  <label htmlFor="contract-number" className={DOC_LABEL_CELL}>
+                    Номер договора
+                  </label>
+                  <div className={`${DOC_INPUT_CELL} min-w-0`}>
+                    <input
+                      id="contract-number"
+                      type="text"
+                      value={contractNumber}
+                      onChange={(e) => setContractNumber(e.target.value)}
+                      className={DOC_INPUT}
+                      placeholder="—"
+                      aria-label="Номер договора"
+                    />
+                  </div>
+                </div>
+                <div className={`${DOC_ROW_GRID_COMPACT} min-w-0 border-t border-neutral-200/90 md:border-t-0`}>
+                  <label htmlFor="contract-date" className={DOC_LABEL_CELL}>
+                    Дата договора
+                  </label>
+                  <div className={`${DOC_INPUT_CELL} min-w-0`}>
+                    <input
+                      id="contract-date"
+                      type="date"
+                      value={contractDate}
+                      onChange={(e) => setContractDate(e.target.value)}
+                      className={DOC_INPUT}
+                      aria-label="Дата договора"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {canUseInvoiceAccount ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 border-b border-neutral-200/90 md:divide-x md:divide-neutral-200/90">
+                <div className={`${DOC_ROW_GRID_COMPACT} min-w-0`}>
+                  <label htmlFor="invoice-number" className={DOC_LABEL_CELL}>
+                    Номер счёта
+                  </label>
+                  <div className={`${DOC_INPUT_CELL} min-w-0`}>
+                    <input
+                      id="invoice-number"
+                      type="text"
+                      value={invoiceNumber}
+                      onChange={(e) => setInvoiceNumber(e.target.value)}
+                      className={DOC_INPUT}
+                      placeholder="—"
+                      aria-label="Номер счёта"
+                    />
+                  </div>
+                </div>
+                <div className={`${DOC_ROW_GRID_COMPACT} min-w-0 border-t border-neutral-200/90 md:border-t-0`}>
+                  <label htmlFor="invoice-date" className={DOC_LABEL_CELL}>
+                    Дата счёта
+                  </label>
+                  <div className={`${DOC_INPUT_CELL} min-w-0`}>
+                    <input
+                      id="invoice-date"
+                      type="date"
+                      value={invoiceDate}
+                      onChange={(e) => setInvoiceDate(e.target.value)}
+                      className={DOC_INPUT}
+                      aria-label="Дата счёта"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="rounded-xl border border-border/80 bg-white overflow-hidden">
           <div className="border-b border-border/70 bg-neutral-50/90 px-3 py-2.5">
@@ -2110,7 +2589,11 @@ const WarehouseReceipt = () => {
                     open={openHelpKey === "items"}
                     tooltipId="help-items"
                     buttonLabel="Подсказка: товарная часть"
-                    text="Добавляйте позиции. Для документа используйте «Наименование по ИКПУ» и/или ИКПУ; подсказки из справочника появятся при вводе. Фото — опционально."
+                    text={
+                      canUseInvoiceIkpu
+                        ? "Добавляйте позиции. Для документа используйте «Наименование по ИКПУ» и/или ИКПУ; подсказки из справочника появятся при вводе. Фото — опционально."
+                        : "Добавляйте позиции по наименованию товара. Подсказки из справочника появятся при вводе. Фото — опционально."
+                    }
                     onOpen={() => setOpenHelpKey("items")}
                     onClose={() => setOpenHelpKey((v) => (v === "items" ? null : v))}
                   />
@@ -2166,6 +2649,82 @@ const WarehouseReceipt = () => {
           ) : (
               <p className="text-sm text-muted/75 leading-relaxed m-0">Суммы по строкам без налога на добавленную стоимость.</p>
           )}
+
+          {canUseCurrency ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-border/50 pt-2.5">
+              <div className="min-w-0">
+                <label htmlFor="invoice-currency" className="block text-xs font-medium text-muted mb-1">
+                  Валюта документа
+                </label>
+                <select
+                  id="invoice-currency"
+                  value={currencyCode}
+                  onChange={(e) => setCurrencyCode(e.target.value)}
+                  className={`${DOC_INPUT} input-select`}
+                  aria-label="Валюта документа"
+                >
+                  {currencies.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.code} — {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {isForeignCurrency ? (
+                <>
+                  <div className="min-w-0">
+                    <label htmlFor="invoice-rate-source" className="block text-xs font-medium text-muted mb-1">
+                      Источник курса
+                    </label>
+                    <select
+                      id="invoice-rate-source"
+                      value={exchangeRateSource}
+                      onChange={(e) => setExchangeRateSource(e.target.value)}
+                      className={`${DOC_INPUT} input-select`}
+                      aria-label="Источник курса"
+                    >
+                      <option value="cbu">Курс ЦБ Узбекистана</option>
+                      <option value="manual">Указать вручную</option>
+                    </select>
+                  </div>
+                  <div className="min-w-0">
+                    <label htmlFor="invoice-rate" className="block text-xs font-medium text-muted mb-1">
+                      Курс к {baseCurrencyCode}
+                      {exchangeRateLoading ? " · загрузка…" : ""}
+                    </label>
+                    <input
+                      id="invoice-rate"
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      value={exchangeRate}
+                      onChange={(e) => setExchangeRate(e.target.value)}
+                      readOnly={exchangeRateSource === "cbu"}
+                      className={`${DOC_INPUT} ${exchangeRateSource === "cbu" ? "bg-secondary/40" : ""}`}
+                      placeholder="0"
+                      aria-label={`Курс ${currencyCode} к ${baseCurrencyCode}`}
+                    />
+                  </div>
+                </>
+              ) : null}
+              {exchangeRateError ? (
+                <p className="md:col-span-3 text-sm text-red-700 bg-red-50/80 border border-red-200/70 rounded-lg px-3 py-2" role="alert">
+                  {exchangeRateError}
+                </p>
+              ) : null}
+              {isForeignCurrency && exchangeRateNumber > 0 ? (
+                <p className="md:col-span-3 text-sm font-medium text-sky-900/90 m-0 py-1">
+                  1 {currencyCode} ={" "}
+                  <span className="font-mono tabular-nums">
+                    {exchangeRateNumber.toLocaleString("ru-RU", { maximumFractionDigits: 6 })} {baseCurrencyCode}
+                  </span>
+                  {exchangeRateDate ? ` · на ${formatDateDdMmYyyy(exchangeRateDate)}` : ""}
+                  {selectedCurrencyMeta?.symbol ? ` · вводите цены в ${currencyCode}` : ""}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           {canUseMarking ? (
               <p className="text-sm text-muted/75 leading-relaxed m-0 border-t border-border/50 pt-2.5">
               <span className="font-medium text-muted/75">Маркировка:</span> одна позиция наименования (например, 10 холодильников) — под строкой
@@ -2178,7 +2737,6 @@ const WarehouseReceipt = () => {
               Каждая строка — отдельная позиция. В полях «Наше наименование», «Наименование по ИКПУ» и «ИКПУ» при вводе показываются подсказки из справочника (по названию в двух первых полях и по коду в ИКПУ); выбор строки подставляет данные, иначе значения остаются как ввели. При сохранении счёт‑фактуры новые позиции с наименованием (ещё не из справочника) автоматически добавляются в справочник товаров. Маркировка (если доступна по тарифу) — ниже по строке.
             </p>
           </div>
-        </div>
 
         {hasCatalogOrInvoiceAlerts ? (
           <div className="space-y-3">
@@ -2313,92 +2871,96 @@ const WarehouseReceipt = () => {
                       />
                     </div>
                     </div>
-                    <div className={`${DOC_ROW_GRID} min-w-0`}>
-                      <label htmlFor={`item-ikpu-name-${row.id}`} className={DOC_LABEL_CELL}>
-                        <span className="block">Наименование по ИКПУ</span>
-                        {organizationId ? (
-                          <span className="block font-normal text-muted/60 mt-0.5">поиск по названию в справочнике</span>
-                        ) : null}
-                      </label>
-                      <div className={`${DOC_INPUT_CELL} min-w-0`}>
-                        <input
-                          id={`item-ikpu-name-${row.id}`}
-                          type="text"
-                          autoComplete="off"
-                          value={row.ikpuName ?? ""}
-                          onChange={(e) =>
-                            handleItemChange(row.id, { ikpuName: e.target.value, catalogProductId: null })
-                          }
-                          onFocus={() => {
-                            if (!organizationId) return;
-                            setProductPickerRowId(row.id);
-                            setProductPickerField("ikpuName");
-                          }}
-                          className={DOC_INPUT}
-                          placeholder="По справочнику или вручную"
-                          role={organizationId ? "combobox" : undefined}
-                          aria-expanded={
-                            !!organizationId &&
-                            productPickerRowId === row.id &&
-                            productPickerField === "ikpuName"
-                          }
-                          aria-controls={organizationId ? `catalog-list-${row.id}` : undefined}
-                          aria-autocomplete={organizationId ? "list" : undefined}
-                          aria-label="Наименование по ИКПУ; при вводе — подсказки из справочника по названию"
-                        />
-                    </div>
-                    </div>
-                    <div className={`${DOC_ROW_GRID} min-w-0`}>
-                      <label
-                        htmlFor={`item-ikpu-${row.id}`}
-                        className={`${DOC_LABEL_CELL} flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-2`}
-                      >
-                        <span className="min-w-0">
-                          <span className="block">ИКПУ</span>
-                          {organizationId ? (
-                            <span className="block font-normal text-muted/60 mt-0.5">поиск по коду в справочнике</span>
-                          ) : null}
-                        </span>
-                        <HelpTooltip
-                          open={openHelpKey === `ikpu-${row.id}`}
-                          tooltipId={`help-ikpu-${row.id}`}
-                          buttonLabel="Подсказка: ИКПУ"
-                          text="ИКПУ — уникальный код товара (17 цифр). Можно оставить пустым, если кода нет. При вводе цифр появятся подсказки из справочника."
-                          onOpen={() => setOpenHelpKey(`ikpu-${row.id}`)}
-                          onClose={() =>
-                            setOpenHelpKey((v) => (v === `ikpu-${row.id}` ? null : v))
-                          }
-                        />
-                        </label>
-                      <div className={`${DOC_INPUT_CELL} min-w-0`}>
-                        <input
-                          id={`item-ikpu-${row.id}`}
-                          type="text"
-                          inputMode="numeric"
-                          autoComplete="off"
-                          value={row.ikpu ?? ""}
-                          onChange={(e) =>
-                            handleItemChange(row.id, { ikpu: e.target.value, catalogProductId: null })
-                          }
-                          onFocus={() => {
-                            if (!organizationId) return;
-                            setProductPickerRowId(row.id);
-                            setProductPickerField("ikpu");
-                          }}
-                          className={`${DOC_INPUT} font-mono text-[13px]`}
-                          placeholder="17 цифр или пусто"
-                          role={organizationId ? "combobox" : undefined}
-                          aria-expanded={
-                            !!organizationId &&
-                            productPickerRowId === row.id &&
-                            productPickerField === "ikpu"
-                          }
-                          aria-controls={organizationId ? `catalog-list-${row.id}` : undefined}
-                          aria-autocomplete={organizationId ? "list" : undefined}
-                          aria-label="ИКПУ товара; при вводе цифр — подсказки из справочника по ИКПУ"
-                        />
-                      </div>
-                    </div>
+                    {canUseInvoiceIkpu ? (
+                      <>
+                        <div className={`${DOC_ROW_GRID} min-w-0`}>
+                          <label htmlFor={`item-ikpu-name-${row.id}`} className={DOC_LABEL_CELL}>
+                            <span className="block">Наименование по ИКПУ</span>
+                            {organizationId ? (
+                              <span className="block font-normal text-muted/60 mt-0.5">поиск по названию в справочнике</span>
+                            ) : null}
+                          </label>
+                          <div className={`${DOC_INPUT_CELL} min-w-0`}>
+                            <input
+                              id={`item-ikpu-name-${row.id}`}
+                              type="text"
+                              autoComplete="off"
+                              value={row.ikpuName ?? ""}
+                              onChange={(e) =>
+                                handleItemChange(row.id, { ikpuName: e.target.value, catalogProductId: null })
+                              }
+                              onFocus={() => {
+                                if (!organizationId) return;
+                                setProductPickerRowId(row.id);
+                                setProductPickerField("ikpuName");
+                              }}
+                              className={DOC_INPUT}
+                              placeholder="По справочнику или вручную"
+                              role={organizationId ? "combobox" : undefined}
+                              aria-expanded={
+                                !!organizationId &&
+                                productPickerRowId === row.id &&
+                                productPickerField === "ikpuName"
+                              }
+                              aria-controls={organizationId ? `catalog-list-${row.id}` : undefined}
+                              aria-autocomplete={organizationId ? "list" : undefined}
+                              aria-label="Наименование по ИКПУ; при вводе — подсказки из справочника по названию"
+                            />
+                          </div>
+                        </div>
+                        <div className={`${DOC_ROW_GRID} min-w-0`}>
+                          <label
+                            htmlFor={`item-ikpu-${row.id}`}
+                            className={`${DOC_LABEL_CELL} flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-2`}
+                          >
+                            <span className="min-w-0">
+                              <span className="block">ИКПУ</span>
+                              {organizationId ? (
+                                <span className="block font-normal text-muted/60 mt-0.5">поиск по коду в справочнике</span>
+                              ) : null}
+                            </span>
+                            <HelpTooltip
+                              open={openHelpKey === `ikpu-${row.id}`}
+                              tooltipId={`help-ikpu-${row.id}`}
+                              buttonLabel="Подсказка: ИКПУ"
+                              text="ИКПУ — уникальный код товара (17 цифр). Можно оставить пустым, если кода нет. При вводе цифр появятся подсказки из справочника."
+                              onOpen={() => setOpenHelpKey(`ikpu-${row.id}`)}
+                              onClose={() =>
+                                setOpenHelpKey((v) => (v === `ikpu-${row.id}` ? null : v))
+                              }
+                            />
+                          </label>
+                          <div className={`${DOC_INPUT_CELL} min-w-0`}>
+                            <input
+                              id={`item-ikpu-${row.id}`}
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete="off"
+                              value={row.ikpu ?? ""}
+                              onChange={(e) =>
+                                handleItemChange(row.id, { ikpu: e.target.value, catalogProductId: null })
+                              }
+                              onFocus={() => {
+                                if (!organizationId) return;
+                                setProductPickerRowId(row.id);
+                                setProductPickerField("ikpu");
+                              }}
+                              className={`${DOC_INPUT} font-mono text-[13px]`}
+                              placeholder="17 цифр или пусто"
+                              role={organizationId ? "combobox" : undefined}
+                              aria-expanded={
+                                !!organizationId &&
+                                productPickerRowId === row.id &&
+                                productPickerField === "ikpu"
+                              }
+                              aria-controls={organizationId ? `catalog-list-${row.id}` : undefined}
+                              aria-autocomplete={organizationId ? "list" : undefined}
+                              aria-label="ИКПУ товара; при вводе цифр — подсказки из справочника по ИКПУ"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
                     {canUseUpc ? (
                       <div className={`${DOC_ROW_GRID} min-w-0`}>
                         <label
@@ -2482,7 +3044,7 @@ const WarehouseReceipt = () => {
 
                 <div className="p-3 sm:p-4">
                   {vatMode === "without" ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
                       <div>
                         <label htmlFor={`item-unit-${row.id}`} className={ITEM_FIELD_LABEL}>
                           Ед. изм.
@@ -2515,6 +3077,9 @@ const WarehouseReceipt = () => {
                       <div>
                         <label htmlFor={`item-price-${row.id}`} className={ITEM_FIELD_LABEL}>
                           Цена за ед.
+                          {isForeignCurrency ? (
+                            <span className="ml-1 font-normal text-muted/60">({calc.rowCurrency})</span>
+                          ) : null}
                         </label>
                         <MoneyField
                           id={`item-price-${row.id}`}
@@ -2523,20 +3088,62 @@ const WarehouseReceipt = () => {
                           className={`${ITEM_FIELD_INPUT} text-right font-mono`}
                           ariaLabel="Цена за единицу"
                         />
+                        {isForeignCurrency ? (
+                          <LineCurrencyToggle
+                            rowId={row.id}
+                            currentCode={calc.rowCurrency}
+                            docCode={currencyCode}
+                            baseCode={baseCurrencyCode}
+                            onChange={(code) =>
+                              handleItemChange(row.id, { lineCurrencyCode: code })
+                            }
+                          />
+                        ) : null}
+                        {isForeignCurrency &&
+                        calc.rowCurrency === currencyCode &&
+                        exchangeRateNumber > 0 &&
+                        (Number(row.unitPrice) || 0) > 0 ? (
+                          <p className="text-xs font-medium text-sky-800/90 mt-1 text-right tabular-nums">
+                            = {moneyFmt.format((Number(row.unitPrice) || 0) * exchangeRateNumber)} {baseCurrencyCode}
+                          </p>
+                        ) : null}
                       </div>
                       <div>
-                        <span className={ITEM_FIELD_LABEL}>Сумма</span>
+                        <label htmlFor={`item-sale-price-${row.id}`} className={ITEM_FIELD_LABEL}>
+                          Цена продажи
+                          <span className="ml-1 font-normal text-muted/60">(POS, UZS)</span>
+                        </label>
+                        <MoneyField
+                          id={`item-sale-price-${row.id}`}
+                          value={row.salePrice ?? 0}
+                          onCommit={(n) => handleItemChange(row.id, { salePrice: n })}
+                          className={`${ITEM_FIELD_INPUT} text-right font-mono`}
+                          ariaLabel="Цена продажи для POS"
+                        />
+                      </div>
+                      <div>
+                        <span className={ITEM_FIELD_LABEL}>
+                          Сумма
+                          {isForeignCurrency ? (
+                            <span className="ml-1 font-normal text-muted/60">({calc.rowCurrency})</span>
+                          ) : null}
+                        </span>
                         <div
                           className={ITEM_SUM_BOX}
                           aria-label={`Сумма по позиции ${index + 1}`}
                         >
                           {moneyFmt.format(calc.amountWithoutVat)}
                         </div>
+                        {isForeignCurrency && calc.rowCurrency === currencyCode && exchangeRateNumber > 0 ? (
+                          <p className="text-xs font-medium text-sky-800/90 mt-1 text-right tabular-nums">
+                            = {moneyFmt.format(calc.amountWithoutVatBase)} {baseCurrencyCode}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
                         <div>
                           <label htmlFor={`item-unit-${row.id}`} className={ITEM_FIELD_LABEL}>
                             Ед. изм.
@@ -2569,6 +3176,9 @@ const WarehouseReceipt = () => {
                         <div>
                           <label htmlFor={`item-price-${row.id}`} className={ITEM_FIELD_LABEL}>
                             Цена без НДС
+                            {isForeignCurrency ? (
+                              <span className="ml-1 font-normal text-muted/60">({calc.rowCurrency})</span>
+                            ) : null}
                           </label>
                           <MoneyField
                             id={`item-price-${row.id}`}
@@ -2577,15 +3187,57 @@ const WarehouseReceipt = () => {
                             className={`${ITEM_FIELD_INPUT} text-right font-mono`}
                             ariaLabel="Цена без НДС за единицу"
                           />
+                          {isForeignCurrency ? (
+                            <LineCurrencyToggle
+                              rowId={row.id}
+                              currentCode={calc.rowCurrency}
+                              docCode={currencyCode}
+                              baseCode={baseCurrencyCode}
+                              onChange={(code) =>
+                                handleItemChange(row.id, { lineCurrencyCode: code })
+                              }
+                            />
+                          ) : null}
+                          {isForeignCurrency &&
+                          calc.rowCurrency === currencyCode &&
+                          exchangeRateNumber > 0 &&
+                          (Number(row.unitPrice) || 0) > 0 ? (
+                            <p className="text-xs font-medium text-sky-800/90 mt-1 text-right tabular-nums">
+                              = {moneyFmt.format((Number(row.unitPrice) || 0) * exchangeRateNumber)} {baseCurrencyCode}
+                            </p>
+                          ) : null}
                         </div>
                         <div>
-                          <span className={ITEM_FIELD_LABEL}>Сумма без НДС</span>
+                          <label htmlFor={`item-sale-price-${row.id}`} className={ITEM_FIELD_LABEL}>
+                            Цена продажи
+                            <span className="ml-1 font-normal text-muted/60">(POS, UZS)</span>
+                          </label>
+                          <MoneyField
+                            id={`item-sale-price-${row.id}`}
+                            value={row.salePrice ?? 0}
+                            onCommit={(n) => handleItemChange(row.id, { salePrice: n })}
+                            className={`${ITEM_FIELD_INPUT} text-right font-mono`}
+                            ariaLabel="Цена продажи для POS"
+                          />
+                        </div>
+                        <div>
+                          <span className={ITEM_FIELD_LABEL}>
+                            Сумма без НДС
+                            {isForeignCurrency ? (
+                              <span className="ml-1 font-normal text-muted/60">({calc.rowCurrency})</span>
+                            ) : null}
+                          </span>
                           <div
                             className={ITEM_SUM_BOX}
                             aria-label={`Сумма без НДС по позиции ${index + 1}`}
                           >
                             {moneyFmt.format(calc.amountWithoutVat)}
                           </div>
+                          {isForeignCurrency && calc.rowCurrency === currencyCode && exchangeRateNumber > 0 ? (
+                            <p className="text-xs font-medium text-sky-800/90 mt-1 text-right tabular-nums">
+                              = {moneyFmt.format(calc.amountWithoutVatBase)} {baseCurrencyCode}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
                       <div className="grid grid-cols-3 gap-3 sm:gap-4 pt-2 border-t border-border/60">
@@ -2742,79 +3394,274 @@ const WarehouseReceipt = () => {
         </div>
 
         <div className="rounded-xl border border-border/80 bg-secondary/50 px-4 py-3 sm:px-5 shadow-inner ring-1 ring-border/30 space-y-3">
-          <div className="flex flex-wrap items-center gap-3 pb-3 border-b border-border/60">
-            <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-semibold text-muted">
-              <input
-                type="checkbox"
-                checked={manualTotalEnabled}
-                onChange={(e) => {
-                  const on = e.target.checked;
-                  setManualTotalEnabled(on);
-                  if (on) {
-                    const base = vatMode === "without" ? totals.totalWithoutVat : totals.totalWithVat;
-                    setManualTotalValue(String(base));
-                  }
-                }}
-                className="rounded border-neutral-300 text-primary focus:ring-primary"
-                aria-label="Задать итоговую сумму вручную"
-              />
-              Итог вручную
-            </label>
-            {manualTotalEnabled ? (
-              <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[12rem]">
-                <label htmlFor="manual-grand-total" className="sr-only">
-                  Сумма итого документа
+          {!isForeignCurrency ? (
+            <>
+              <div className="flex flex-wrap items-center gap-3 pb-3 border-b border-border/60">
+                <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-semibold text-muted">
+                  <input
+                    type="checkbox"
+                    checked={manualTotalEnabled}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setManualTotalEnabled(on);
+                      if (on) {
+                        const base =
+                          vatMode === "without"
+                            ? primaryTotals.totalWithoutVat
+                            : primaryTotals.totalWithVat;
+                        setManualTotalValue(String(base));
+                      }
+                    }}
+                    className="rounded border-neutral-300 text-primary focus:ring-primary"
+                    aria-label="Задать итоговую сумму вручную"
+                  />
+                  Итог вручную
                 </label>
-                <input
-                  id="manual-grand-total"
-                  type="text"
-                  inputMode="decimal"
-                  value={manualTotalValue}
-                  onChange={(e) => setManualTotalValue(e.target.value)}
-                  className={`${ITEM_FIELD_INPUT} flex-1 min-w-[8rem] max-w-xs font-mono text-base`}
-                  placeholder="0,00"
-                  aria-label="Итоговая сумма документа вручную"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setManualTotalEnabled(false);
-                    setManualTotalValue("");
-                  }}
-                  className="shrink-0 px-3 py-2 rounded-lg text-sm font-semibold border border-border bg-white text-muted hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition"
-                  aria-label="Сбросить итог к расчёту по позициям"
-                >
-                  Сбросить к расчёту
-                </button>
+                {manualTotalEnabled ? (
+                  <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[12rem]">
+                    <input
+                      id="manual-grand-total"
+                      type="text"
+                      inputMode="decimal"
+                      value={manualTotalValue}
+                      onChange={(e) => setManualTotalValue(e.target.value)}
+                      className={`${ITEM_FIELD_INPUT} flex-1 min-w-[8rem] max-w-xs font-mono text-base`}
+                      placeholder="0,00"
+                      aria-label="Итоговая сумма документа вручную"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManualTotalEnabled(false);
+                        setManualTotalValue("");
+                      }}
+                      className="shrink-0 px-3 py-2 rounded-lg text-sm font-semibold border border-border bg-white text-muted hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition"
+                      aria-label="Сбросить итог к расчёту по позициям"
+                    >
+                      Сбросить к расчёту
+                    </button>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-          </div>
-          {footerTotals.calculatedLabel ? (
-            <p className="text-sm text-muted/75">{footerTotals.calculatedLabel}</p>
-          ) : null}
-          {vatMode === "without" ? (
-            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-2 text-base font-semibold text-muted">
-              <span>Итого: кол-во единиц — {totalQuantity}</span>
-              <span className="font-mono tabular-nums text-lg sm:text-xl">
-                {moneyFmt.format(footerTotals.display.totalWithoutVat)}
-              </span>
-            </div>
+              {footerTotals.calculatedLabel ? (
+                <p className="text-sm text-muted/75">{footerTotals.calculatedLabel}</p>
+              ) : null}
+              {vatMode === "without" ? (
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-2 text-base font-semibold text-muted">
+                  <span>Итого: кол-во единиц — {totalQuantity}</span>
+                  <span className="font-mono tabular-nums text-lg sm:text-xl">
+                    {moneyFmt.format(footerTotals.display.totalWithoutVat)}
+                  </span>
+                </div>
+              ) : (
+                <div className="space-y-2.5 text-base text-muted">
+                  <div className="flex flex-wrap justify-between gap-2 font-medium">
+                    <span>Итого без НДС ({totalQuantity} ед.)</span>
+                    <span className="font-mono tabular-nums">
+                      {moneyFmt.format(footerTotals.display.totalWithoutVat)}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap justify-between gap-2 text-muted/95">
+                    <span>НДС {DEFAULT_VAT_RATE_PERCENT}%</span>
+                    <span className="font-mono tabular-nums">
+                      {moneyFmt.format(footerTotals.display.totalVat)}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap justify-between gap-2 pt-2 border-t border-border/60 text-lg font-semibold text-muted">
+                    <span>Всего с НДС</span>
+                    <span className="font-mono tabular-nums">
+                      {moneyFmt.format(footerTotals.display.totalWithVat)}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
-            <div className="space-y-2.5 text-base text-muted">
-              <div className="flex flex-wrap justify-between gap-2 font-medium">
-                <span>Итого без НДС ({totalQuantity} ед.)</span>
-                <span className="font-mono tabular-nums">{moneyFmt.format(footerTotals.display.totalWithoutVat)}</span>
+            <div className="space-y-4">
+              <p className="text-sm text-muted/75 m-0 pb-2 border-b border-border/60">
+                Итого кол-во единиц — {totalQuantity}
+                {exchangeRateNumber > 0 ? (
+                  <span className="block mt-1 text-xs text-muted/65">
+                    Курс: 1 {currencyCode} = {exchangeRateNumber.toLocaleString("ru-RU", { maximumFractionDigits: 6 })}{" "}
+                    {baseCurrencyCode}
+                  </span>
+                ) : null}
+              </p>
+
+              {/* Итог в UZS */}
+              <div className="space-y-2 text-sm text-muted/90">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-muted">Итог в {baseCurrencyCode}</span>
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-muted/80">
+                    <input
+                      type="checkbox"
+                      checked={manualTotalEnabled}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setManualTotalEnabled(on);
+                        if (on) {
+                          const base =
+                            vatMode === "without"
+                              ? primaryTotals.totalWithoutVat
+                              : primaryTotals.totalWithVat;
+                          setManualTotalValue(String(base));
+                        }
+                      }}
+                      className="rounded border-neutral-300 text-primary focus:ring-primary"
+                      aria-label={`Задать итог в ${baseCurrencyCode} вручную`}
+                    />
+                    Вручную
+                  </label>
+                  {manualTotalEnabled ? (
+                    <>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={manualTotalValue}
+                        onChange={(e) => setManualTotalValue(e.target.value)}
+                        className={`${ITEM_FIELD_INPUT} w-28 font-mono text-sm`}
+                        placeholder="0,00"
+                        aria-label={`Итог в ${baseCurrencyCode} вручную`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setManualTotalEnabled(false);
+                          setManualTotalValue("");
+                        }}
+                        className="text-xs font-semibold text-primary hover:underline"
+                        aria-label={`Сбросить итог ${baseCurrencyCode}`}
+                      >
+                        Сбросить
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+                {footerTotals.calculatedLabel ? (
+                  <p className="text-xs text-muted/65 m-0">{footerTotals.calculatedLabel}</p>
+                ) : null}
+                {hasMixedLineCurrencies ? (
+                  <p className="text-xs text-muted/65 m-0">
+                    Все позиции в {baseCurrencyCode} и пересчёт USD-позиций по курсу.
+                  </p>
+                ) : null}
+                {vatMode === "with" ? (
+                  <>
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <span>Без НДС, {baseCurrencyCode}</span>
+                      <span className="font-mono tabular-nums">
+                        {moneyFmt.format(footerTotals.display.totalWithoutVat)}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <span>НДС, {baseCurrencyCode}</span>
+                      <span className="font-mono tabular-nums">
+                        {moneyFmt.format(footerTotals.display.totalVat)}
+                      </span>
+                    </div>
+                  </>
+                ) : null}
+                <div className="flex flex-wrap justify-between gap-2 pt-1 border-t border-border/50 text-base font-semibold text-muted">
+                  <span>Всего, {baseCurrencyCode}</span>
+                  <span className="font-mono tabular-nums text-lg">
+                    {moneyFmt.format(
+                      vatMode === "with"
+                        ? footerTotals.display.totalWithVat
+                        : footerTotals.display.totalWithoutVat
+                    )}
+                  </span>
+                </div>
               </div>
-              <div className="flex flex-wrap justify-between gap-2 text-muted/95">
-                <span>НДС {DEFAULT_VAT_RATE_PERCENT}%</span>
-                <span className="font-mono tabular-nums">{moneyFmt.format(footerTotals.display.totalVat)}</span>
-              </div>
-              <div className="flex flex-wrap justify-between gap-2 pt-2 border-t border-border/60 text-lg font-semibold text-muted">
-                <span>Всего с НДС</span>
-                <span className="font-mono tabular-nums">{moneyFmt.format(footerTotals.display.totalWithVat)}</span>
-              </div>
+
+              {/* Итог в USD */}
+              {exchangeRateNumber > 0 && footerDocTotals ? (
+                <div className="pt-3 border-t border-border/60 space-y-2 text-sm text-muted/90">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-muted">Итог в {currencyCode}</span>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-muted/80">
+                      <input
+                        type="checkbox"
+                        checked={manualTotalDocEnabled}
+                        onChange={(e) => {
+                          const on = e.target.checked;
+                          setManualTotalDocEnabled(on);
+                          if (on && docCurrencyTotals) {
+                            const base =
+                              vatMode === "without"
+                                ? docCurrencyTotals.totalWithoutVat
+                                : docCurrencyTotals.totalWithVat;
+                            setManualTotalDocValue(String(base));
+                          }
+                        }}
+                        className="rounded border-neutral-300 text-primary focus:ring-primary"
+                        aria-label={`Задать итог в ${currencyCode} вручную`}
+                      />
+                      Вручную
+                    </label>
+                    {manualTotalDocEnabled ? (
+                      <>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={manualTotalDocValue}
+                          onChange={(e) => setManualTotalDocValue(e.target.value)}
+                          className={`${ITEM_FIELD_INPUT} w-28 font-mono text-sm`}
+                          placeholder="0,00"
+                          aria-label={`Итог в ${currencyCode} вручную`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setManualTotalDocEnabled(false);
+                            setManualTotalDocValue("");
+                          }}
+                          className="text-xs font-semibold text-primary hover:underline"
+                          aria-label={`Сбросить итог ${currencyCode}`}
+                        >
+                          Сбросить
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                  {footerDocTotals.calculatedLabel ? (
+                    <p className="text-xs text-muted/65 m-0">{footerDocTotals.calculatedLabel}</p>
+                  ) : null}
+                  {hasMixedLineCurrencies ? (
+                    <p className="text-xs text-muted/65 m-0">
+                      Только позиции в {currencyCode}; сумовые строки здесь не учитываются.
+                    </p>
+                  ) : null}
+                  {vatMode === "with" ? (
+                    <>
+                      <div className="flex flex-wrap justify-between gap-2">
+                        <span>Без НДС, {currencyCode}</span>
+                        <span className="font-mono tabular-nums">
+                          {moneyFmt.format(footerDocTotals.display.totalWithoutVat)}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap justify-between gap-2">
+                        <span>НДС, {currencyCode}</span>
+                        <span className="font-mono tabular-nums">
+                          {moneyFmt.format(footerDocTotals.display.totalVat)}
+                        </span>
+                      </div>
+                    </>
+                  ) : null}
+                  <div className="flex flex-wrap justify-between gap-2 pt-1 border-t border-border/50 text-base font-semibold text-muted">
+                    <span>Всего, {currencyCode}</span>
+                    <span className="font-mono tabular-nums text-lg">
+                      {moneyFmt.format(
+                        vatMode === "with"
+                          ? footerDocTotals.display.totalWithVat
+                          : footerDocTotals.display.totalWithoutVat
+                      )}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
+        </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border/60 pt-4">

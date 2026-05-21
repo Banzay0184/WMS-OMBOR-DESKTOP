@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import bwipjs from "bwip-js/browser";
 import { useAuth } from "../../context/AuthContext";
 import { authFetch } from "../../api/client";
+import { useOrganizationTariffFeatures } from "../../utils/useOrganizationTariffFeatures";
 
 const moneyFmt = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -61,7 +62,12 @@ const CompanyOutgoingInvoiceDetail = () => {
   const [approveError, setApproveError] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState("");
-  const [canUseUpc, setCanUseUpc] = useState(false);
+  const {
+    canUseUpc,
+    canUseInvoiceContract,
+    canUseInvoiceAccount,
+    canUseInvoiceIkpu,
+  } = useOrganizationTariffFeatures(organizationId);
 
   const load = useCallback(async () => {
     if (!organizationId || !outgoingInvoiceId) return;
@@ -89,27 +95,6 @@ const CompanyOutgoingInvoiceDetail = () => {
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    if (!organizationId) {
-      setCanUseUpc(false);
-      return;
-    }
-    const loadFeatureFlags = async () => {
-      try {
-        const res = await authFetch(`platform/organizations/${organizationId}/`);
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setCanUseUpc(false);
-          return;
-        }
-        setCanUseUpc(json?.subscription?.tariff_can_upc === true);
-      } catch {
-        setCanUseUpc(false);
-      }
-    };
-    void loadFeatureFlags();
-  }, [organizationId]);
 
   const handleApprove = useCallback(async () => {
     if (!organizationId || !outgoingInvoiceId) return;
@@ -234,7 +219,7 @@ const CompanyOutgoingInvoiceDetail = () => {
           <div className="flex flex-wrap items-center gap-2 mt-2">
             <h1 className="text-xl font-semibold text-muted tracking-tight">
               Расходная счёт‑фактура
-              {data.contract_number?.trim()
+              {canUseInvoiceContract && data.contract_number?.trim()
                 ? ` № ${data.contract_number.trim()}`
                 : ` (внутр. № ${data.id})`}
             </h1>
@@ -247,7 +232,7 @@ const CompanyOutgoingInvoiceDetail = () => {
             </span>
           </div>
           <p className="text-sm text-muted/75 mt-1">
-            {data.contract_number?.trim() ? (
+            {canUseInvoiceContract && data.contract_number?.trim() ? (
               <span className="text-muted/65">Внутр. № {data.id} · </span>
             ) : null}
             {vatLabel} · создано {formatDate(data.created_at)} (создал: {createdByLabel})
@@ -319,18 +304,22 @@ const CompanyOutgoingInvoiceDetail = () => {
             <dt className="text-xs text-muted/65">ИНН</dt>
             <dd className="font-mono">{data.customer_inn || "—"}</dd>
           </div>
-          <div>
-            <dt className="text-xs text-muted/65">Договор</dt>
-            <dd>
-              {data.contract_number || "—"} {data.contract_date ? `от ${formatDate(data.contract_date)}` : ""}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted/65">Счёт</dt>
-            <dd>
-              {data.invoice_number || "—"} {data.invoice_date ? `от ${formatDate(data.invoice_date)}` : ""}
-            </dd>
-          </div>
+          {canUseInvoiceContract ? (
+            <div>
+              <dt className="text-xs text-muted/65">Договор</dt>
+              <dd>
+                {data.contract_number || "—"} {data.contract_date ? `от ${formatDate(data.contract_date)}` : ""}
+              </dd>
+            </div>
+          ) : null}
+          {canUseInvoiceAccount ? (
+            <div>
+              <dt className="text-xs text-muted/65">Счёт</dt>
+              <dd>
+                {data.invoice_number || "—"} {data.invoice_date ? `от ${formatDate(data.invoice_date)}` : ""}
+              </dd>
+            </div>
+          ) : null}
         </dl>
       </div>
 
@@ -343,7 +332,7 @@ const CompanyOutgoingInvoiceDetail = () => {
             <thead>
               <tr className="border-b border-border text-left text-xs font-semibold text-muted/70">
                 <th className="py-2 px-3">Наименование</th>
-                <th className="py-2 px-3">ИКПУ</th>
+                {canUseInvoiceIkpu ? <th className="py-2 px-3">ИКПУ</th> : null}
                 {canUseUpc ? <th className="py-2 px-3">UPC</th> : null}
                 <th className="py-2 px-3">Маркировка / Data Matrix</th>
                 <th className="py-2 px-3 text-right">Кол-во</th>
@@ -362,7 +351,9 @@ const CompanyOutgoingInvoiceDetail = () => {
                         <span className="block text-xs text-muted/75 mt-0.5 print-hide-secondary">{line.ikpu_name}</span>
                       ) : null}
                     </td>
-                    <td className="py-2 px-3 font-mono text-xs">{line.ikpu_code || "—"}</td>
+                    {canUseInvoiceIkpu ? (
+                      <td className="py-2 px-3 font-mono text-xs">{line.ikpu_code || "—"}</td>
+                    ) : null}
                     {canUseUpc ? (
                       <td className="py-2 px-3 font-mono text-xs">{line.upc || "—"}</td>
                     ) : null}

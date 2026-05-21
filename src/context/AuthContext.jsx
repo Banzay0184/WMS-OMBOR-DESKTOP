@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { authFetch, clearSessionInvalidated, setOnUnauthorized } from "../api/client";
+import { zonesForOrganization, resolveSingleContextTarget } from "../utils/contextZones";
 
 const STORAGE_KEYS = {
   accessToken: "accessToken",
@@ -36,6 +37,14 @@ const loadUserFromStorage = () => {
   }
 };
 
+const _normalizeOrgId = (raw) => {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw.trim() !== "" && !Number.isNaN(Number(raw))) {
+    return Number(raw);
+  }
+  return null;
+};
+
 const loadActiveContextFromStorage = () => {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.activeContext);
@@ -44,16 +53,12 @@ const loadActiveContextFromStorage = () => {
     if (!ctx || typeof ctx !== "object") return null;
     if (ctx.type === "platform") return { type: "platform" };
     if (ctx.type === "organization") {
-      const rawId = ctx.organizationId;
-      const normalizedId =
-        typeof rawId === "number"
-          ? rawId
-          : typeof rawId === "string" && rawId.trim() !== "" && !Number.isNaN(Number(rawId))
-            ? Number(rawId)
-            : null;
-      if (typeof normalizedId === "number" && Number.isFinite(normalizedId)) {
-        return { type: "organization", organizationId: normalizedId };
-      }
+      const id = _normalizeOrgId(ctx.organizationId);
+      if (id != null) return { type: "organization", organizationId: id };
+    }
+    if (ctx.type === "pos") {
+      const id = _normalizeOrgId(ctx.organizationId);
+      if (id != null) return { type: "pos", organizationId: id };
     }
     return null;
   } catch {
@@ -96,14 +101,18 @@ export const AuthProvider = ({ children }) => {
 
   /** Установить активный контекст и сохранить в localStorage. */
   const setActiveContext = useCallback((type, organizationId = null) => {
-    const normalizedOrganizationId =
-      type === "organization" && organizationId != null && organizationId !== ""
-        ? Number(organizationId)
-        : null;
-    const next =
-      type === "platform"
-        ? { type: "platform" }
-        : { type: "organization", organizationId: normalizedOrganizationId };
+    let next;
+    if (type === "platform") {
+      next = { type: "platform" };
+    } else if (type === "pos") {
+      const id =
+        organizationId != null && organizationId !== "" ? Number(organizationId) : null;
+      next = { type: "pos", organizationId: id };
+    } else {
+      const id =
+        organizationId != null && organizationId !== "" ? Number(organizationId) : null;
+      next = { type: "organization", organizationId: id };
+    }
     setActiveContextState(next);
     try {
       localStorage.setItem(STORAGE_KEYS.activeContext, JSON.stringify(next));
@@ -255,10 +264,19 @@ export const AuthProvider = ({ children }) => {
       if (cancelled) return;
       const platform = Boolean(data?.platform);
       const organizations = Array.isArray(data?.organizations) ? data.organizations : [];
-      const total = (platform ? 1 : 0) + organizations.length;
-      if (total !== 1) return;
-      if (platform) setActiveContext("platform");
-      else if (organizations[0]?.id != null) setActiveContext("organization", organizations[0].id);
+
+      const singleTarget = resolveSingleContextTarget(data);
+      if (!singleTarget) return;
+
+      if (singleTarget.type === "platform") {
+        setActiveContext("platform");
+        return;
+      }
+      if (singleTarget.type === "pos") {
+        setActiveContext("pos", singleTarget.organizationId);
+        return;
+      }
+      setActiveContext("organization", singleTarget.organizationId);
     });
     return () => {
       cancelled = true;
@@ -275,7 +293,16 @@ export const AuthProvider = ({ children }) => {
       const id = activeContext.organizationId;
       if (id == null) invalid = true;
       else if (Array.isArray(availableContexts.organizations)) {
-        if (!availableContexts.organizations.some((o) => Number(o.id) === Number(id))) invalid = true;
+        const match = availableContexts.organizations.find((o) => Number(o.id) === Number(id));
+        if (!match || !zonesForOrganization(match).includes("app")) invalid = true;
+      }
+    } else if (activeContext.type === "pos") {
+      const id = activeContext.organizationId;
+      if (id == null) {
+        invalid = true;
+      } else if (Array.isArray(availableContexts.organizations)) {
+        const match = availableContexts.organizations.find((o) => Number(o.id) === Number(id));
+        if (!match || !zonesForOrganization(match).includes("pos")) invalid = true;
       }
     }
     if (invalid) clearActiveContext();

@@ -11,7 +11,14 @@ const navLinkClass = ({ isActive }) =>
 
 const AppLayout = () => {
   const navigate = useNavigate();
-  const { user, logout, activeContext, isAppPageForbidden } = useAuth();
+  const {
+    user,
+    logout,
+    activeContext,
+    isAppPageForbidden,
+    availableContexts,
+    setActiveContext,
+  } = useAuth();
   const organizationId = activeContext?.type === "organization" ? activeContext.organizationId : null;
 
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -23,6 +30,22 @@ const AppLayout = () => {
   const canSeeSuppliers = !isAppPageForbidden?.(organizationId, "suppliers");
   const canSeeProducts = !isAppPageForbidden?.(organizationId, "products");
   const canSeeCompanySettings = !isAppPageForbidden?.(organizationId, "company_settings");
+
+  const canOpenPos = useMemo(() => {
+    if (!organizationId) return false;
+    const orgs = availableContexts?.organizations;
+    if (!Array.isArray(orgs)) return false;
+    const match = orgs.find((o) => Number(o.id) === Number(organizationId));
+    if (!match) return false;
+    const zones = Array.isArray(match.available_zones) ? match.available_zones : [];
+    return zones.includes("pos") || match.has_pos === true;
+  }, [availableContexts, organizationId]);
+
+  const handleOpenPos = () => {
+    if (!organizationId) return;
+    setActiveContext("pos", organizationId);
+    navigate("/pos", { replace: true });
+  };
 
   const initials = useMemo(() => {
     const name = user?.username;
@@ -116,6 +139,19 @@ const AppLayout = () => {
           <h1 className="font-logo text-lg font-semibold text-primary truncate">
             WMS — Рабочая зона
           </h1>
+          <div className="flex items-center gap-2">
+            {canOpenPos ? (
+              <button
+                type="button"
+                onClick={handleOpenPos}
+                aria-label="Открыть кассу POS"
+                tabIndex={0}
+                className="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
+              >
+                <span aria-hidden="true">🛒</span>
+                Касса POS
+              </button>
+            ) : null}
           <div className="relative" ref={profileMenuRef}>
             <button
               type="button"
@@ -186,6 +222,7 @@ const AppLayout = () => {
                 </button>
               </div>
             ) : null}
+          </div>
           </div>
         </header>
         <div className="px-4 py-6 sm:px-6 lg:px-8">
