@@ -9,13 +9,14 @@ const ORG_ADMIN_ROLE_CODES = ["organization_owner", "organization_admin"];
 export const useOrganizationMemberPermissions = (organizationId) => {
   const [permissions, setPermissions] = useState([]);
   const [roleCode, setRoleCode] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(() => Boolean(organizationId));
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     if (!organizationId) {
       setPermissions([]);
       setRoleCode("");
+      setLoading(false);
       return;
     }
     setLoading(true);

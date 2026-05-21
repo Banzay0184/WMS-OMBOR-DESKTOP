@@ -18,14 +18,19 @@ const DEFAULT_FEATURES = {
 
 export const useOrganizationTariffFeatures = (organizationId) => {
   const [features, setFeatures] = useState(DEFAULT_FEATURES);
-  const [loading, setLoading] = useState(false);
+  /** true до первого ответа API — иначе canUseMarking=false на один кадр и ложный редирект на /unmarked */
+  const [loading, setLoading] = useState(() => Boolean(organizationId));
+  const [ready, setReady] = useState(() => !organizationId);
 
   const load = useCallback(async () => {
     if (!organizationId) {
       setFeatures(DEFAULT_FEATURES);
+      setLoading(false);
+      setReady(true);
       return;
     }
     setLoading(true);
+    setReady(false);
     try {
       const res = await authFetch(`platform/organizations/${organizationId}/`);
       const data = await res.json().catch(() => ({}));
@@ -47,6 +52,7 @@ export const useOrganizationTariffFeatures = (organizationId) => {
       setFeatures(DEFAULT_FEATURES);
     } finally {
       setLoading(false);
+      setReady(true);
     }
   }, [organizationId]);
 
@@ -54,5 +60,5 @@ export const useOrganizationTariffFeatures = (organizationId) => {
     void load();
   }, [load]);
 
-  return { ...features, loading, reload: load };
+  return { ...features, loading, ready, reload: load };
 };

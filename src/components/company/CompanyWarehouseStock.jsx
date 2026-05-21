@@ -157,6 +157,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     canUseInvoiceAccount,
     canUseMarking,
     loading: tariffFeaturesLoading,
+    ready: tariffFeaturesReady,
   } = useOrganizationTariffFeatures(organizationId);
 
   const [outgoingRows, setOutgoingRows] = useState([]);
@@ -290,12 +291,11 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   }, [loadWarehouse]);
 
   useEffect(() => {
-    if (tariffFeaturesLoading || !warehouseId) return;
+    if (!tariffFeaturesReady || tariffFeaturesLoading || !warehouseId) return;
     if (!canUseMarking && (section === "marked" || section === "outgoing_marked")) {
       navigate(`/app/warehouses/${warehouseId}/unmarked`, { replace: true });
-      return;
     }
-  }, [canUseMarking, tariffFeaturesLoading, section, warehouseId, navigate]);
+  }, [canUseMarking, tariffFeaturesReady, tariffFeaturesLoading, section, warehouseId, navigate]);
 
   useEffect(() => {
     if (!canUseMarking || !canLoadWarehouseStock || permissionsLoading) return;
@@ -683,7 +683,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     return <p className="text-sm text-muted">Выберите организацию в контексте.</p>;
   }
 
-  if (tariffFeaturesLoading || permissionsLoading) {
+  if (!tariffFeaturesReady || tariffFeaturesLoading || permissionsLoading) {
     return (
       <div className="py-10 text-center text-sm text-muted" role="status" aria-live="polite">
         Загрузка склада…
@@ -1553,9 +1553,9 @@ export const CompanyWarehouseStockHomeRedirect = () => {
   const { warehouseId } = useParams();
   const { activeContext } = useAuth();
   const organizationId = activeContext?.type === "organization" ? activeContext.organizationId : null;
-  const { canUseMarking, loading } = useOrganizationTariffFeatures(organizationId);
+  const { canUseMarking, loading, ready } = useOrganizationTariffFeatures(organizationId);
 
-  if (loading) {
+  if (!ready || loading) {
     return <p className="text-sm text-muted/75 py-6">Загрузка…</p>;
   }
   if (canUseMarking) {
