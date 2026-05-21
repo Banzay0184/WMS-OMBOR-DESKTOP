@@ -94,7 +94,11 @@ const ProtectedRoute = ({ children, requireContext }) => {
     activeContext?.type === "organization" &&
     availableContexts === null;
   if (shouldWaitForContextResolution || shouldWaitForOrganizationContexts) {
-    return null;
+    return (
+      <div className="min-h-[40vh] flex items-center justify-center text-sm text-muted" role="status">
+        Загрузка…
+      </div>
+    );
   }
 
   if (requireContext === "platform") {
@@ -115,7 +119,13 @@ const ProtectedRoute = ({ children, requireContext }) => {
       return <Navigate to="/select-context" replace />;
     }
     const orgs = availableContexts?.organizations;
-    if (checkingContexts) return null;
+    if (checkingContexts) {
+      return (
+        <div className="min-h-[40vh] flex items-center justify-center text-sm text-muted" role="status">
+          Загрузка…
+        </div>
+      );
+    }
     if (!Array.isArray(orgs)) {
       return <Navigate to="/select-context" replace />;
     }
@@ -141,7 +151,13 @@ const ProtectedRoute = ({ children, requireContext }) => {
       return <Navigate to="/select-context" replace />;
     }
     const orgs = availableContexts?.organizations;
-    if (checkingContexts) return null;
+    if (checkingContexts) {
+      return (
+        <div className="min-h-[40vh] flex items-center justify-center text-sm text-muted" role="status">
+          Загрузка…
+        </div>
+      );
+    }
     if (!Array.isArray(orgs)) {
       return <Navigate to="/select-context" replace />;
     }

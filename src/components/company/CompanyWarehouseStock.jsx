@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import bwipjs from "bwip-js/browser";
 import { useAuth } from "../../context/AuthContext";
 import { authFetch } from "../../api/client";
 import { getImageUrl } from "../../config";
+import { useOrganizationMemberPermissions } from "../../utils/useOrganizationMemberPermissions";
 import { useOrganizationTariffFeatures } from "../../utils/useOrganizationTariffFeatures";
 
 const rowDisplayName = (row, canUseIkpu) => {
@@ -51,17 +51,25 @@ const MarkingQrCell = ({ value }) => {
 
   useEffect(() => {
     if (!code || !canvasRef.current) return;
-    try {
-      bwipjs.toCanvas(canvasRef.current, {
-        bcid: "datamatrix",
-        text: code,
-        scale: 3,
-        paddingwidth: 0,
-        paddingheight: 0,
+    let cancelled = false;
+    import("bwip-js/browser")
+      .then((mod) => {
+        if (cancelled || !canvasRef.current) return;
+        const bwipjs = mod.default ?? mod;
+        bwipjs.toCanvas(canvasRef.current, {
+          bcid: "datamatrix",
+          text: code,
+          scale: 3,
+          paddingwidth: 0,
+          paddingheight: 0,
+        });
+      })
+      .catch(() => {
+        // QR не критичен для страницы
       });
-    } catch {
-      // ignore render issues, fallback shown below
-    }
+    return () => {
+      cancelled = true;
+    };
   }, [code]);
 
   if (!code) {
@@ -107,8 +115,16 @@ const ProductPhotoCell = ({ url, label }) => {
 const CompanyWarehouseStock = ({ section = "marked" }) => {
   const navigate = useNavigate();
   const { warehouseId } = useParams();
-  const { activeContext, markForbiddenAppPage } = useAuth();
+  const { activeContext, markForbiddenAppPage, clearForbiddenAppPage } = useAuth();
   const organizationId = activeContext?.type === "organization" ? activeContext.organizationId : null;
+
+  const {
+    loading: permissionsLoading,
+    canViewStock,
+    canCreateSales,
+  } = useOrganizationMemberPermissions(organizationId);
+
+  const [stockAccessError, setStockAccessError] = useState("");
 
   const [warehouseName, setWarehouseName] = useState("");
   const [warehouseLoading, setWarehouseLoading] = useState(true);
@@ -179,18 +195,35 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         setWarehouseName("");
         return;
       }
+      clearForbiddenAppPage?.(organizationId, "warehouses");
       setWarehouseName((data.name || "").trim() || `Склад #${warehouseId}`);
     } catch {
       setWarehouseName("");
     } finally {
       setWarehouseLoading(false);
     }
-  }, [organizationId, warehouseId, markForbiddenAppPage]);
+  }, [organizationId, warehouseId, markForbiddenAppPage, clearForbiddenAppPage]);
+
+  const handleStockForbidden = useCallback(
+    (resStatus, detail) => {
+      if (resStatus === 403) {
+        setStockAccessError(
+          typeof detail === "string" && detail
+            ? detail
+            : "Нет права «Просмотр остатков» (stock.view). Обратитесь к администратору компании, чтобы добавить его в вашу роль."
+        );
+        return true;
+      }
+      return false;
+    },
+    []
+  );
 
   const loadMarkingUnits = useCallback(async () => {
-    if (!organizationId || !warehouseId) return;
+    if (!organizationId || !warehouseId || !canViewStock) return;
     setRowsLoading(true);
     setError("");
+    setStockAccessError("");
     try {
       const payload = { page, page_size: pageSize };
       const q = debouncedSearch.trim();
@@ -202,9 +235,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (res.status === 403) {
-          markForbiddenAppPage?.(organizationId, "warehouses");
-          setError("Нет доступа.");
+        if (handleStockForbidden(res.status, data.detail)) {
           setRows([]);
           setTotalCount(0);
           setFilteredCount(0);
@@ -216,6 +247,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         setFilteredCount(0);
         return;
       }
+      clearForbiddenAppPage?.(organizationId, "warehouses");
       setRows(Array.isArray(data.results) ? data.results : []);
       setTotalCount(typeof data.total_count === "number" ? data.total_count : 0);
       setFilteredCount(typeof data.count === "number" ? data.count : 0);
@@ -227,7 +259,16 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     } finally {
       setRowsLoading(false);
     }
-  }, [organizationId, warehouseId, page, pageSize, debouncedSearch, markForbiddenAppPage]);
+  }, [
+    organizationId,
+    warehouseId,
+    page,
+    pageSize,
+    debouncedSearch,
+    canViewStock,
+    handleStockForbidden,
+    clearForbiddenAppPage,
+  ]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 400);
@@ -252,20 +293,18 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       navigate(`/app/warehouses/${warehouseId}/unmarked`, { replace: true });
       return;
     }
-    if (canUseMarking && !canUseWarehouseOutgoing && section === "outgoing_marked") {
-      navigate(`/app/warehouses/${warehouseId}/marked`, { replace: true });
-    }
-  }, [canUseMarking, canUseWarehouseOutgoing, tariffFeaturesLoading, section, warehouseId, navigate]);
+  }, [canUseMarking, tariffFeaturesLoading, section, warehouseId, navigate]);
 
   useEffect(() => {
-    if (!canUseMarking) return;
+    if (!canUseMarking || !canViewStock || permissionsLoading) return;
     void loadMarkingUnits();
-  }, [canUseMarking, loadMarkingUnits]);
+  }, [canUseMarking, canViewStock, permissionsLoading, loadMarkingUnits]);
 
   const loadUnmarkedStock = useCallback(async () => {
-    if (!organizationId || !warehouseId) return;
+    if (!organizationId || !warehouseId || !canViewStock) return;
     setUnmarkedLoading(true);
     setUnmarkedError("");
+    setStockAccessError("");
     try {
       const params = new URLSearchParams();
       params.set("page", String(unmarkedPage));
@@ -277,9 +316,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (res.status === 403) {
-          markForbiddenAppPage?.(organizationId, "warehouses");
-          setUnmarkedError("Нет доступа.");
+        if (handleStockForbidden(res.status, data.detail)) {
           setUnmarkedRows([]);
           setUnmarkedTotalCount(0);
           setUnmarkedFilteredCount(0);
@@ -291,6 +328,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         setUnmarkedFilteredCount(0);
         return;
       }
+      clearForbiddenAppPage?.(organizationId, "warehouses");
       setUnmarkedRows(Array.isArray(data.results) ? data.results : []);
       setUnmarkedTotalCount(typeof data.total_count === "number" ? data.total_count : 0);
       setUnmarkedFilteredCount(typeof data.count === "number" ? data.count : 0);
@@ -308,11 +346,13 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     unmarkedPage,
     unmarkedPageSize,
     unmarkedDebouncedSearch,
-    markForbiddenAppPage,
+    canViewStock,
+    handleStockForbidden,
+    clearForbiddenAppPage,
   ]);
 
   const loadOutgoingMarkingUnits = useCallback(async () => {
-    if (!organizationId || !warehouseId) return;
+    if (!organizationId || !warehouseId || !canViewStock) return;
     setOutgoingLoading(true);
     setOutgoingError("");
     try {
@@ -326,9 +366,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (res.status === 403) {
-          markForbiddenAppPage?.(organizationId, "warehouses");
-          setOutgoingError("Нет доступа.");
+        if (handleStockForbidden(res.status, data.detail)) {
           setOutgoingRows([]);
           setOutgoingTotalCount(0);
           setOutgoingFilteredCount(0);
@@ -340,6 +378,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         setOutgoingFilteredCount(0);
         return;
       }
+      clearForbiddenAppPage?.(organizationId, "warehouses");
       setOutgoingRows(Array.isArray(data.results) ? data.results : []);
       setOutgoingTotalCount(typeof data.total_count === "number" ? data.total_count : 0);
       setOutgoingFilteredCount(typeof data.count === "number" ? data.count : 0);
@@ -357,18 +396,29 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     outgoingPage,
     outgoingPageSize,
     outgoingDebouncedSearch,
-    markForbiddenAppPage,
+    canViewStock,
+    handleStockForbidden,
+    clearForbiddenAppPage,
   ]);
 
   useEffect(() => {
+    if (permissionsLoading || !canViewStock) return;
     if (canUseMarking && section !== "unmarked") return;
     void loadUnmarkedStock();
-  }, [canUseMarking, section, loadUnmarkedStock]);
+  }, [canUseMarking, section, loadUnmarkedStock, canViewStock, permissionsLoading]);
 
   useEffect(() => {
+    if (permissionsLoading || !canViewStock || !canUseWarehouseOutgoing) return;
     if (!canUseMarking || section !== "outgoing_marked") return;
     void loadOutgoingMarkingUnits();
-  }, [canUseMarking, section, loadOutgoingMarkingUnits]);
+  }, [
+    canUseMarking,
+    canUseWarehouseOutgoing,
+    section,
+    loadOutgoingMarkingUnits,
+    canViewStock,
+    permissionsLoading,
+  ]);
 
   useEffect(() => {
     if (filteredCount <= 0) return;
@@ -458,7 +508,12 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (res.status === 403) {
-          markForbiddenAppPage?.(organizationId, "warehouses");
+          setEditError(
+            typeof data.detail === "string" && data.detail
+              ? data.detail
+              : "Нет права изменять маркировку (stock.adjust)."
+          );
+          return;
         }
         const msg =
           typeof data.detail === "string"
@@ -536,7 +591,14 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   };
 
   const handleOpenExpense = () => {
-    if (!canUseWarehouseOutgoing) return;
+    if (!canUseWarehouseOutgoing) {
+      setError("Расход через склад отключён в тарифе компании.");
+      return;
+    }
+    if (!canCreateSales) {
+      setError("Нет права создавать расходные документы (sales.create). Обратитесь к администратору.");
+      return;
+    }
     if (selectedKeys.size === 0) return;
     const selectedRows = [...selectedRowsByKey.entries()]
       .filter(([key]) => selectedKeys.has(key))
@@ -554,7 +616,14 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   };
 
   const handleOpenUnmarkedExpense = (row) => {
-    if (!canUseWarehouseOutgoing) return;
+    if (!canUseWarehouseOutgoing) {
+      setUnmarkedError("Расход через склад отключён в тарифе компании.");
+      return;
+    }
+    if (!canCreateSales) {
+      setUnmarkedError("Нет права создавать расходные документы (sales.create).");
+      return;
+    }
     if (!row) return;
     const prefillItem = {
       our_name: row.our_name || "",
@@ -586,10 +655,15 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     try {
       const res = await authFetch(url, { method: "DELETE" });
       if (!res.ok) {
-        if (res.status === 403) {
-          markForbiddenAppPage?.(organizationId, "warehouses");
-        }
         const data = await res.json().catch(() => ({}));
+        if (res.status === 403) {
+          setDeleteError(
+            typeof data.detail === "string" && data.detail
+              ? data.detail
+              : "Нет права изменять остатки (stock.adjust)."
+          );
+          return;
+        }
         setDeleteError(typeof data.detail === "string" ? data.detail : "Не удалось удалить");
         return;
       }
@@ -604,6 +678,32 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
 
   if (!organizationId) {
     return <p className="text-sm text-muted">Выберите организацию в контексте.</p>;
+  }
+
+  if (tariffFeaturesLoading || permissionsLoading) {
+    return (
+      <div className="py-10 text-center text-sm text-muted" role="status" aria-live="polite">
+        Загрузка склада…
+      </div>
+    );
+  }
+
+  if (!canViewStock) {
+    return (
+      <div className="space-y-4 max-w-2xl">
+        <Link to="/app/warehouses" className="text-sm font-medium text-primary hover:underline">
+          ← Склады компании
+        </Link>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950" role="alert">
+          <p className="font-semibold m-0">Нет доступа к остаткам склада</p>
+          <p className="mt-2 m-0">
+            Для просмотра разделов «С маркировкой», «Без маркировки» и «Расход (маркировка)» нужно право{" "}
+            <span className="font-mono text-xs">stock.view</span>. Попросите администратора компании добавить его в
+            вашу роль (Настройки → Роли).
+          </p>
+        </div>
+      </div>
+    );
   }
 
   const titleName = warehouseLoading ? "…" : warehouseName || `Склад #${warehouseId}`;
@@ -679,6 +779,12 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
             </p>
           ) : null}
         </div>
+        {stockAccessError ? (
+          <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3" role="alert">
+            {stockAccessError}
+          </p>
+        ) : null}
+
         {canUseMarking ? (
           <div className="flex flex-wrap gap-2">
             <Link
@@ -692,19 +798,26 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
             >
               С маркировкой
             </Link>
-            {canUseWarehouseOutgoing ? (
-              <Link
-                to={`/app/warehouses/${warehouseId}/outgoing-marked`}
-                className={`px-3 py-2 rounded-lg border text-sm transition ${
-                  section === "outgoing_marked"
-                    ? "border-primary bg-primary text-white"
-                    : "border-border text-muted hover:bg-secondary"
-                }`}
-                aria-label="Списанные маркировки по расходным документам"
-              >
-                Расход (маркировка)
-              </Link>
-            ) : null}
+            <Link
+              to={`/app/warehouses/${warehouseId}/outgoing-marked`}
+              className={`px-3 py-2 rounded-lg border text-sm transition ${
+                section === "outgoing_marked"
+                  ? "border-primary bg-primary text-white"
+                  : "border-border text-muted hover:bg-secondary"
+              } ${!canUseWarehouseOutgoing ? "opacity-60 pointer-events-none" : ""}`}
+              aria-label="Списанные маркировки по расходным документам"
+              aria-disabled={!canUseWarehouseOutgoing}
+              title={
+                canUseWarehouseOutgoing
+                  ? undefined
+                  : "В тарифе отключён расход через склад"
+              }
+              onClick={(e) => {
+                if (!canUseWarehouseOutgoing) e.preventDefault();
+              }}
+            >
+              Расход (маркировка)
+            </Link>
             <Link
               to={`/app/warehouses/${warehouseId}/unmarked`}
               className={`px-3 py-2 rounded-lg border text-sm transition ${
@@ -717,7 +830,21 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
               Без маркировки
             </Link>
           </div>
-        ) : null}
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <Link
+              to={`/app/warehouses/${warehouseId}/unmarked`}
+              className={`px-3 py-2 rounded-lg border text-sm transition ${
+                section === "unmarked"
+                  ? "border-primary bg-primary text-white"
+                  : "border-border text-muted hover:bg-secondary"
+              }`}
+              aria-label="Остатки на складе"
+            >
+              Остатки на складе
+            </Link>
+          </div>
+        )}
       </div>
 
       {showMarkedStock ? (
@@ -750,7 +877,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
               autoComplete="off"
             />
           </div>
-          {canUseWarehouseOutgoing ? (
+          {canUseWarehouseOutgoing && canCreateSales ? (
             <button
               type="button"
               onClick={handleOpenExpense}
@@ -933,8 +1060,16 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       </div>
       ) : null}
 
-      {section === "outgoing_marked" ? (
+      {showOutgoingMarkedStock ? (
         <div className="rounded-xl border border-border bg-white p-4 shadow-soft space-y-4">
+          {!canUseWarehouseOutgoing ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950" role="status">
+              Раздел «Расход (маркировка)» недоступен: в тарифе компании отключён расход через склад. Обратитесь к
+              администратору платформы.
+            </div>
+          ) : null}
+          {canUseWarehouseOutgoing ? (
+          <>
           <div className="flex flex-wrap items-end gap-3 justify-between">
             <div className="flex-1 min-w-[200px]">
               <label htmlFor="wh-outgoing-search" className="block text-xs font-medium text-muted/80 mb-1">
@@ -1088,6 +1223,8 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
               </div>
             </div>
           ) : null}
+          </>
+          ) : null}
         </div>
       ) : null}
 
@@ -1177,7 +1314,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                       <td className="py-2 px-3 align-top">{row.unit || "шт"}</td>
                       <td className="py-2 px-3 align-top text-right font-semibold">{row.quantity ?? 0}</td>
                       <td className="py-2 px-3 align-top text-right">
-                        {canUseWarehouseOutgoing ? (
+                        {canUseWarehouseOutgoing && canCreateSales ? (
                           <button
                             type="button"
                             onClick={() => handleOpenUnmarkedExpense(row)}
@@ -1187,7 +1324,9 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                             Расход
                           </button>
                         ) : (
-                          <span className="text-xs text-muted/50">—</span>
+                          <span className="text-xs text-muted/50" title="Нужны тариф «расход» и право sales.create">
+                            —
+                          </span>
                         )}
                       </td>
                     </tr>
