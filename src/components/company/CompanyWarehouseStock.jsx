@@ -121,7 +121,9 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   const {
     loading: permissionsLoading,
     canViewStock,
+    canLoadWarehouseStock,
     canCreateSales,
+    permissions: myPermissions,
   } = useOrganizationMemberPermissions(organizationId);
 
   const [stockAccessError, setStockAccessError] = useState("");
@@ -220,7 +222,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   );
 
   const loadMarkingUnits = useCallback(async () => {
-    if (!organizationId || !warehouseId || !canViewStock) return;
+    if (!organizationId || !warehouseId || !canLoadWarehouseStock) return;
     setRowsLoading(true);
     setError("");
     setStockAccessError("");
@@ -265,7 +267,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     page,
     pageSize,
     debouncedSearch,
-    canViewStock,
+    canLoadWarehouseStock,
     handleStockForbidden,
     clearForbiddenAppPage,
   ]);
@@ -296,12 +298,12 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   }, [canUseMarking, tariffFeaturesLoading, section, warehouseId, navigate]);
 
   useEffect(() => {
-    if (!canUseMarking || !canViewStock || permissionsLoading) return;
+    if (!canUseMarking || !canLoadWarehouseStock || permissionsLoading) return;
     void loadMarkingUnits();
-  }, [canUseMarking, canViewStock, permissionsLoading, loadMarkingUnits]);
+  }, [canUseMarking, canLoadWarehouseStock, permissionsLoading, loadMarkingUnits]);
 
   const loadUnmarkedStock = useCallback(async () => {
-    if (!organizationId || !warehouseId || !canViewStock) return;
+    if (!organizationId || !warehouseId || !canLoadWarehouseStock) return;
     setUnmarkedLoading(true);
     setUnmarkedError("");
     setStockAccessError("");
@@ -346,13 +348,13 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     unmarkedPage,
     unmarkedPageSize,
     unmarkedDebouncedSearch,
-    canViewStock,
+    canLoadWarehouseStock,
     handleStockForbidden,
     clearForbiddenAppPage,
   ]);
 
   const loadOutgoingMarkingUnits = useCallback(async () => {
-    if (!organizationId || !warehouseId || !canViewStock) return;
+    if (!organizationId || !warehouseId || !canLoadWarehouseStock) return;
     setOutgoingLoading(true);
     setOutgoingError("");
     try {
@@ -396,19 +398,19 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     outgoingPage,
     outgoingPageSize,
     outgoingDebouncedSearch,
-    canViewStock,
+    canLoadWarehouseStock,
     handleStockForbidden,
     clearForbiddenAppPage,
   ]);
 
   useEffect(() => {
-    if (permissionsLoading || !canViewStock) return;
+    if (permissionsLoading || !canLoadWarehouseStock) return;
     if (canUseMarking && section !== "unmarked") return;
     void loadUnmarkedStock();
-  }, [canUseMarking, section, loadUnmarkedStock, canViewStock, permissionsLoading]);
+  }, [canUseMarking, section, loadUnmarkedStock, canLoadWarehouseStock, permissionsLoading]);
 
   useEffect(() => {
-    if (permissionsLoading || !canViewStock || !canUseWarehouseOutgoing) return;
+    if (permissionsLoading || !canLoadWarehouseStock || !canUseWarehouseOutgoing) return;
     if (!canUseMarking || section !== "outgoing_marked") return;
     void loadOutgoingMarkingUnits();
   }, [
@@ -416,7 +418,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     canUseWarehouseOutgoing,
     section,
     loadOutgoingMarkingUnits,
-    canViewStock,
+    canLoadWarehouseStock,
     permissionsLoading,
   ]);
 
@@ -688,7 +690,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     );
   }
 
-  if (!canViewStock) {
+  if (!canLoadWarehouseStock) {
     return (
       <div className="space-y-4 max-w-2xl">
         <Link to="/app/warehouses" className="text-sm font-medium text-primary hover:underline">
@@ -697,9 +699,8 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950" role="alert">
           <p className="font-semibold m-0">Нет доступа к остаткам склада</p>
           <p className="mt-2 m-0">
-            Для просмотра разделов «С маркировкой», «Без маркировки» и «Расход (маркировка)» нужно право{" "}
-            <span className="font-mono text-xs">stock.view</span>. Попросите администратора компании добавить его в
-            вашу роль (Настройки → Роли).
+            Нужно право <span className="font-mono text-xs">stock.view</span> или{" "}
+            <span className="font-mono text-xs">warehouse.view</span> в вашей роли.
           </p>
         </div>
       </div>
@@ -707,6 +708,28 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   }
 
   const titleName = warehouseLoading ? "…" : warehouseName || `Склад #${warehouseId}`;
+
+  const emptyStockHint = (
+    <div className="rounded-lg border border-border/60 bg-neutral-50/50 p-4 text-sm text-muted/80 space-y-2">
+      <p className="m-0 font-medium text-muted">Почему список может быть пустым</p>
+      <ul className="m-0 list-disc list-inside space-y-1">
+        <li>
+          Товары появляются из{" "}
+          <Link to="/app/invoices" className="text-primary font-medium hover:underline">
+            счёт‑фактур прихода
+          </Link>{" "}
+          на этот склад (в том числе в статусе «черновик»).
+        </li>
+        <li>
+          Вкладка «С маркировкой» — только позиции с заполненными кодами маркировки в приходе.
+        </li>
+        <li>
+          Вкладка «Без маркировки» — позиции прихода без кодов маркировки (минус утверждённый расход).
+        </li>
+        <li>После утверждения прихода остаток фиксируется для расхода и отчётов.</li>
+      </ul>
+    </div>
+  );
   const totalPages = Math.max(1, Math.ceil(Math.max(filteredCount, 1) / pageSize));
   const showPagination = filteredCount > 0;
   const unmarkedTotalPages = Math.max(1, Math.ceil(Math.max(unmarkedFilteredCount, 1) / unmarkedPageSize));
@@ -779,6 +802,14 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
             </p>
           ) : null}
         </div>
+        {!canViewStock && canLoadWarehouseStock ? (
+          <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3" role="status">
+            Остатки загружены по праву просмотра складов. Для полного доступа добавьте в роль право{" "}
+            <span className="font-mono text-xs">stock.view</span>
+            {myPermissions.length > 0 ? ` (сейчас: ${myPermissions.slice(0, 6).join(", ")}${myPermissions.length > 6 ? "…" : ""})` : ""}.
+          </p>
+        ) : null}
+
         {stockAccessError ? (
           <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3" role="alert">
             {stockAccessError}
@@ -899,11 +930,11 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         {rowsLoading ? (
           <p className="text-sm text-muted/75 py-6">Загрузка…</p>
         ) : totalCount === 0 ? (
-          <div className="rounded-lg border border-border/60 bg-neutral-50/50 p-6 text-sm text-muted/80">
-            <p>
-              Нет кодов маркировки по этому складу. Они появляются после утверждения счёт-фактур прихода, в которых для
-              позиций указаны коды маркировки.
+          <div className="space-y-4">
+            <p className="text-sm text-muted/80 m-0">
+              Нет кодов маркировки по этому складу. Добавьте приход со счёт‑фактурой и укажите коды в позициях.
             </p>
+            {emptyStockHint}
           </div>
         ) : filteredCount === 0 ? (
           <p className="text-sm text-muted/75 py-6">Ничего не найдено по запросу.</p>
@@ -963,6 +994,11 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                       </td>
                       <td className="py-2 px-3 align-top max-w-[16rem]">
                         <span className="font-medium text-muted">{name}</span>
+                        {row.invoice_status === "draft" ? (
+                          <span className="ml-1.5 inline-block text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200">
+                            черновик
+                          </span>
+                        ) : null}
                         {canUseInvoiceIkpu && row.ikpu_name && row.our_name ? (
                           <span className="block text-xs text-muted/70 mt-0.5">{row.ikpu_name}</span>
                         ) : null}
@@ -1273,7 +1309,12 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         {unmarkedLoading ? (
           <p className="text-sm text-muted/75 py-6">Загрузка…</p>
         ) : unmarkedTotalCount === 0 ? (
-          <p className="text-sm text-muted/75 py-6">Нет остатков товаров без маркировки.</p>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted/80 m-0">
+              Нет остатков товаров без маркировки на этом складе.
+            </p>
+            {emptyStockHint}
+          </div>
         ) : unmarkedFilteredCount === 0 ? (
           <p className="text-sm text-muted/75 py-6">Ничего не найдено по запросу.</p>
         ) : (
@@ -1301,6 +1342,11 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                       </td>
                       <td className="py-2 px-3 align-top max-w-[16rem]">
                         <span className="font-medium text-muted">{name}</span>
+                        {row.has_draft_incoming ? (
+                          <span className="ml-1.5 inline-block text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200">
+                            есть черновик
+                          </span>
+                        ) : null}
                         {canUseInvoiceIkpu && row.ikpu_name && row.our_name ? (
                           <span className="block text-xs text-muted/70 mt-0.5">{row.ikpu_name}</span>
                         ) : null}
