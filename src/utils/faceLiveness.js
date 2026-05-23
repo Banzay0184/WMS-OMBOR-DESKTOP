@@ -16,7 +16,7 @@ export const LIVENESS_TARGETS = [
 
 const STABLE_FRAMES_REQUIRED = 4;
 const HOLD_FRAMES_REQUIRED = 9;
-const MIN_FACE_WIDTH_RATIO = 0.13;
+const MIN_FACE_WIDTH_RATIO = 0.12;
 const SESSION_TIMEOUT_MS = 45000;
 
 const computeVariance = (values) => {
@@ -53,6 +53,7 @@ export const createLivenessSession = () => ({
   targetsHit: [],
   positionHistory: [],
   widthHistory: [],
+  finished: false,
   startedAt: Date.now(),
 });
 
@@ -76,6 +77,19 @@ export const stepLiveness = (session, detection, videoEl) => {
   const target = getCurrentTarget(session);
   const videoWidth = videoEl.videoWidth;
   const videoHeight = videoEl.videoHeight;
+
+  if (session.finished) {
+    return {
+      session,
+      message: "Сохранение…",
+      completed: false,
+      failed: false,
+      aligned: true,
+      currentTarget: null,
+      progress: 1,
+      fillRatio: 1,
+    };
+  }
 
   if (!target) {
     return buildCompleted(session, elapsed);
@@ -216,7 +230,7 @@ const buildCompleted = (session, elapsed, holdCheck) => {
   }
 
   return {
-    session: { ...session, targetIndex: LIVENESS_TARGETS.length },
+    session: { ...session, targetIndex: LIVENESS_TARGETS.length, finished: true },
     message: "Проверка пройдена, вход…",
     completed: true,
     failed: false,

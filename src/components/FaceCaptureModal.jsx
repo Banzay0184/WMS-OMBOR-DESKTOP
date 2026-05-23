@@ -63,6 +63,7 @@ export const FaceCaptureModal = ({
   const scanTimerRef = useRef(null);
   const scanningRef = useRef(false);
   const scanInProgressRef = useRef(false);
+  const submitLockedRef = useRef(false);
   const livenessRef = useRef(createLivenessSession());
   const busyRef = useRef(busy);
   const faceApiRef = useRef(null);
@@ -77,13 +78,18 @@ export const FaceCaptureModal = ({
 
   busyRef.current = busy;
 
-  const stopCamera = useCallback(() => {
+  const stopScanTimer = useCallback(() => {
     if (scanTimerRef.current) {
       clearInterval(scanTimerRef.current);
       scanTimerRef.current = null;
     }
+  }, []);
+
+  const stopCamera = useCallback(() => {
+    stopScanTimer();
     scanningRef.current = false;
     scanInProgressRef.current = false;
+    submitLockedRef.current = false;
     livenessRef.current = createLivenessSession();
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -92,19 +98,21 @@ export const FaceCaptureModal = ({
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-  }, []);
+  }, [stopScanTimer]);
 
   const resetAfterError = useCallback((message) => {
+    stopScanTimer();
     setError(message);
     scanningRef.current = false;
     scanInProgressRef.current = false;
+    submitLockedRef.current = false;
     setVerifying(false);
     livenessRef.current = resetLivenessSession();
     setCurrentTarget(LIVENESS_TARGETS[0]);
     setAligned(false);
     setFillRatio(0);
     setStatusMessage(LIVENESS_TARGETS[0].label);
-  }, []);
+  }, [stopScanTimer]);
 
   const runAutoScan = useCallback(async () => {
     const videoEl = videoRef.current;
@@ -165,6 +173,10 @@ export const FaceCaptureModal = ({
 
       if (!livenessStep.completed) return;
 
+      if (submitLockedRef.current) return;
+      submitLockedRef.current = true;
+      stopScanTimer();
+
       scanningRef.current = true;
       setVerifying(true);
       setError("");
@@ -180,18 +192,20 @@ export const FaceCaptureModal = ({
         imageBase64: videoFrameToImageBase64(videoEl),
         liveness: livenessStep.proof,
       });
+      stopCamera();
     } catch (err) {
       resetAfterError(err.message ?? "Не удалось распознать лицо.");
     } finally {
       scanInProgressRef.current = false;
     }
-  }, [onCapture, resetAfterError]);
+  }, [onCapture, resetAfterError, stopCamera, stopScanTimer]);
 
   const startCamera = useCallback(async () => {
     setStarting(true);
     setStatusMessage("Запуск камеры…");
     setError("");
     setVerifying(false);
+    submitLockedRef.current = false;
     livenessRef.current = createLivenessSession();
     setCurrentTarget(LIVENESS_TARGETS[0]);
     setAligned(false);
@@ -295,9 +309,31 @@ export const FaceCaptureModal = ({
         </p>
 
         {error ? (
-          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3" role="alert">
-            {error}
-          </p>
+          <div className="mb-3 space-y-2">
+            <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2" role="alert">
+              {error}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                submitLockedRef.current = false;
+                livenessRef.current = resetLivenessSession();
+                setCurrentTarget(LIVENESS_TARGETS[0]);
+                setAligned(false);
+                setFillRatio(0);
+                setStatusMessage(LIVENESS_TARGETS[0].label);
+                if (!scanTimerRef.current && videoRef.current?.srcObject) {
+                  scanTimerRef.current = setInterval(() => {
+                    void runAutoScan();
+                  }, SCAN_INTERVAL_MS);
+                }
+              }}
+              className="w-full py-2 rounded-lg border border-border text-sm text-primary hover:bg-secondary"
+            >
+              Повторить
+            </button>
+          </div>
         ) : null}
 
         <button

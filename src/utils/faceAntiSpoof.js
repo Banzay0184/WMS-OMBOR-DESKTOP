@@ -68,8 +68,8 @@ export const analyzeAntiSpoofFrame = (videoEl, detection, previousImageData) => 
   return { imageData, texture, motion };
 };
 
-export const MIN_TEXTURE_SCORE = 28;
-export const MIN_MICRO_MOTION = 1.6;
+export const MIN_TEXTURE_SCORE = 18;
+export const MIN_MICRO_MOTION = 0.8;
 export const MIN_DESCRIPTOR_SPREAD = 0.018;
 
 export const validateAntiSpoofSamples = ({ textureScores, motionScores }) => {
