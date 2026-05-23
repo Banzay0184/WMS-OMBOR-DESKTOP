@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { authFetch, clearSessionInvalidated, setOnUnauthorized } from "../api/client";
+import { prefetchLivenessModels } from "../utils/faceRecognition";
 import { zonesForOrganization, resolveSingleContextTarget } from "../utils/contextZones";
 
 const STORAGE_KEYS = {
@@ -74,6 +75,7 @@ export const AuthProvider = ({ children }) => {
   const [contextsLoadError, setContextsLoadError] = useState(false);
   /** false до завершения инициализации (восстановление из localStorage), чтобы не редиректить на / до того, как узнаем про user. */
   const [authReady, setAuthReady] = useState(false);
+  const contextsFetchRef = useRef(null);
   const [forbiddenAppPages, setForbiddenAppPages] = useState(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.forbiddenAppPages);
@@ -159,6 +161,7 @@ export const AuthProvider = ({ children }) => {
       });
       setContextsLoadError(false);
     }
+    prefetchLivenessModels();
   }, [clearActiveContext]);
 
   const logout = useCallback(() => {
@@ -228,25 +231,48 @@ export const AuthProvider = ({ children }) => {
   );
 
   /** Загрузить доступные контексты с бэкенда (для экрана выбора при отсутствии в state). */
-  const fetchContexts = useCallback(async () => {
-    try {
-      const res = await authFetch("me/contexts/");
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data) {
-        setAvailableContexts({
-          platform: Boolean(data.platform),
-          organizations: Array.isArray(data.organizations) ? data.organizations : [],
-        });
-        setContextsLoadError(false);
-        return data;
-      }
-    } catch {
-      // ignore
+  const fetchContexts = useCallback(async ({ force = false } = {}) => {
+    if (!force && availableContexts !== null) {
+      return {
+        platform: availableContexts.platform,
+        organizations: availableContexts.organizations,
+      };
     }
-    setAvailableContexts(EMPTY_CONTEXTS);
-    setContextsLoadError(true);
-    return null;
-  }, []);
+
+    if (contextsFetchRef.current) {
+      return contextsFetchRef.current;
+    }
+
+    const request = (async () => {
+      try {
+        const res = await authFetch("me/contexts/");
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data) {
+          const normalized = {
+            platform: Boolean(data.platform),
+            organizations: Array.isArray(data.organizations) ? data.organizations : [],
+          };
+          setAvailableContexts(normalized);
+          setContextsLoadError(false);
+          return normalized;
+        }
+      } catch {
+        // ignore
+      }
+      setAvailableContexts(EMPTY_CONTEXTS);
+      setContextsLoadError(true);
+      return null;
+    })();
+
+    contextsFetchRef.current = request;
+    try {
+      return await request;
+    } finally {
+      if (contextsFetchRef.current === request) {
+        contextsFetchRef.current = null;
+      }
+    }
+  }, [availableContexts]);
 
   /**
    * Восстановление контекста после refresh:
@@ -260,11 +286,9 @@ export const AuthProvider = ({ children }) => {
     if (activeContext) return;
 
     let cancelled = false;
-    fetchContexts().then((data) => {
-      if (cancelled) return;
-      const platform = Boolean(data?.platform);
-      const organizations = Array.isArray(data?.organizations) ? data.organizations : [];
 
+    const applySingleContext = (data) => {
+      if (cancelled || !data) return;
       const singleTarget = resolveSingleContextTarget(data);
       if (!singleTarget) return;
 
@@ -277,11 +301,18 @@ export const AuthProvider = ({ children }) => {
         return;
       }
       setActiveContext("organization", singleTarget.organizationId);
-    });
+    };
+
+    if (availableContexts !== null) {
+      applySingleContext(availableContexts);
+      return undefined;
+    }
+
+    fetchContexts().then(applySingleContext);
     return () => {
       cancelled = true;
     };
-  }, [authReady, isAuthenticated, activeContext, fetchContexts, setActiveContext]);
+  }, [authReady, isAuthenticated, activeContext, availableContexts, fetchContexts, setActiveContext]);
 
   /** После загрузки контекстов проверяем: текущий activeContext ещё входит в актуальный список? */
   useEffect(() => {
@@ -321,6 +352,11 @@ export const AuthProvider = ({ children }) => {
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    if (!authReady || !isAuthenticated) return;
+    prefetchLivenessModels();
+  }, [authReady, isAuthenticated]);
 
   useEffect(() => {
     setOnUnauthorized(() => {

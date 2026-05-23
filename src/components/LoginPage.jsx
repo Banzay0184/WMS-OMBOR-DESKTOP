@@ -4,7 +4,7 @@ import { API_URL, COMPANY } from "../config";
 import { useAuth } from "../context/AuthContext";
 import { resolveSingleContextTarget } from "../utils/contextZones";
 import { formatPhoneDisplay, getPhoneDigits, PHONE_PLACEHOLDER } from "../utils/phone";
-import { isCameraAvailable } from "../utils/faceRecognition";
+import { isCameraAvailable, prefetchLivenessModels } from "../utils/faceRecognition";
 import FaceCaptureModal from "./FaceCaptureModal";
 import { loginWithFaceId } from "./FaceIdSettings";
 
@@ -37,7 +37,9 @@ const LoginPage = () => {
   useEffect(() => {
     let active = true;
     void isCameraAvailable().then((available) => {
-      if (active) setFaceIdSupported(available);
+      if (!active) return;
+      setFaceIdSupported(available);
+      if (available) prefetchLivenessModels();
     });
     return () => {
       active = false;

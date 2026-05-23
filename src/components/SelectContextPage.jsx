@@ -41,7 +41,7 @@ const SelectContextPage = () => {
 
   const handleRetryContexts = () => {
     setRefreshing(true);
-    fetchContexts().finally(() => setRefreshing(false));
+    fetchContexts({ force: true }).finally(() => setRefreshing(false));
   };
 
   useEffect(() => {

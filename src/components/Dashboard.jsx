@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { authFetch } from "../api/client";
+import { getCachedDashboardSummary, setCachedDashboardSummary } from "../utils/dashboardCache";
 import { PAYMENT_LABEL, STATUS_CLASS, STATUS_LABEL, formatSalePaymentLabel } from "./pos/posApi";
 
 const moneyFmt = new Intl.NumberFormat("ru-RU", {
@@ -266,20 +267,35 @@ const Dashboard = () => {
       setLoading(false);
       return;
     }
-    setLoading(true);
-    setError("");
+
+    const cached = getCachedDashboardSummary(organizationId);
+    if (cached) {
+      setSummary(cached);
+      setError("");
+      setLoading(false);
+    } else {
+      setLoading(true);
+      setError("");
+    }
+
     try {
       const res = await authFetch(`platform/organizations/${organizationId}/dashboard-summary/`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.detail || "Не удалось загрузить сводку.");
-        setSummary(null);
+        if (!cached) {
+          setError(data?.detail || "Не удалось загрузить сводку.");
+          setSummary(null);
+        }
         return;
       }
+      setCachedDashboardSummary(organizationId, data);
       setSummary(data);
+      setError("");
     } catch {
-      setError("Не удалось загрузить сводку.");
-      setSummary(null);
+      if (!cached) {
+        setError("Не удалось загрузить сводку.");
+        setSummary(null);
+      }
     } finally {
       setLoading(false);
     }

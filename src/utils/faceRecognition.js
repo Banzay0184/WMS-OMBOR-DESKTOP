@@ -1,7 +1,8 @@
-const FACE_API_MODEL_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model";
+const MODEL_URL = `${import.meta.env.BASE_URL}models`.replace(/([^:]\/)\/+/g, "$1");
 
-let modelsPromise = null;
 let faceApiModule = null;
+let livenessModelsPromise = null;
+let recognitionModelPromise = null;
 
 const loadFaceApi = async () => {
   if (!faceApiModule) {
@@ -10,18 +11,46 @@ const loadFaceApi = async () => {
   return faceApiModule;
 };
 
-export const loadFaceModels = async () => {
-  if (!modelsPromise) {
-    modelsPromise = (async () => {
+/** TinyFace + landmarks (~450 KB) — для liveness в реальном времени. */
+export const loadLivenessModels = async () => {
+  if (!livenessModelsPromise) {
+    livenessModelsPromise = (async () => {
       const faceapi = await loadFaceApi();
       await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(FACE_API_MODEL_URL),
-        faceapi.nets.faceLandmark68Net.loadFromUri(FACE_API_MODEL_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(FACE_API_MODEL_URL),
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
       ]);
-    })();
+    })().catch((err) => {
+      livenessModelsPromise = null;
+      throw err;
+    });
   }
-  return modelsPromise;
+  return livenessModelsPromise;
+};
+
+/** Recognition (~4 MB) — только перед сохранением лица / входом. */
+export const loadRecognitionModel = async () => {
+  await loadLivenessModels();
+  if (!recognitionModelPromise) {
+    recognitionModelPromise = (async () => {
+      const faceapi = await loadFaceApi();
+      await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+    })().catch((err) => {
+      recognitionModelPromise = null;
+      throw err;
+    });
+  }
+  return recognitionModelPromise;
+};
+
+export const loadFaceModels = async () => {
+  await loadLivenessModels();
+  await loadRecognitionModel();
+};
+
+/** Фоновая предзагрузка после login — без тяжёлой recognition-модели. */
+export const prefetchLivenessModels = () => {
+  void loadLivenessModels().catch(() => {});
 };
 
 export const isCameraAvailable = async () => {
@@ -42,7 +71,10 @@ const runDetection = async (videoEl, { minConfidence = 0.45, withDescriptor = fa
   if (!videoEl?.videoWidth) return null;
 
   const faceapi = await loadFaceApi();
-  await loadFaceModels();
+  await loadLivenessModels();
+  if (withDescriptor) {
+    await loadRecognitionModel();
+  }
 
   const options = new faceapi.TinyFaceDetectorOptions({
     inputSize: 224,
@@ -60,15 +92,13 @@ const runDetection = async (videoEl, { minConfidence = 0.45, withDescriptor = fa
   return {
     detection,
     score: detection.detection.score,
-    descriptor: withDescriptor ? Array.from(detection.descriptor) : detection.descriptor,
+    descriptor: withDescriptor ? Array.from(detection.descriptor) : null,
   };
 };
 
-/** Быстрая проверка + descriptor для anti-spoof (нужен вектор на каждом hold-кадре). */
-export const detectFaceForLiveness = async (videoEl, { minConfidence = 0.45, withDescriptor = false } = {}) =>
-  runDetection(videoEl, { minConfidence, withDescriptor });
+export const detectFaceForLiveness = async (videoEl, { minConfidence = 0.45 } = {}) =>
+  runDetection(videoEl, { minConfidence, withDescriptor: false });
 
-/** Полное распознавание — только в конце, один раз. */
 export const detectFaceInVideo = async (videoEl, { minConfidence = 0.45 } = {}) =>
   runDetection(videoEl, { minConfidence, withDescriptor: true });
 

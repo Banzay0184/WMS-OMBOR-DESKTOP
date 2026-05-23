@@ -4,7 +4,7 @@ import {
   detectFaceInVideo,
   drawFaceOverlay,
   getFaceApi,
-  loadFaceModels,
+  loadLivenessModels,
   videoFrameToImageBase64,
 } from "../utils/faceRecognition";
 import {
@@ -138,7 +138,6 @@ export const FaceCaptureModal = ({
     try {
       const found = await detectFaceForLiveness(videoEl, {
         minConfidence: MIN_FACE_SCORE,
-        withDescriptor: livenessRef.current.subPhase === "hold",
       });
 
       if (!found || found.score < MIN_FACE_SCORE) {
@@ -213,7 +212,7 @@ export const FaceCaptureModal = ({
     faceApiRef.current = null;
 
     try {
-      await loadFaceModels();
+      await loadLivenessModels();
       faceApiRef.current = await getFaceApi();
 
       const stream = await navigator.mediaDevices.getUserMedia({

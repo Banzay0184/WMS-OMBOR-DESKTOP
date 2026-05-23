@@ -66,6 +66,7 @@ const ProtectedRoute = ({ children, requireContext }) => {
     if (!isAuthenticated) return;
     if (requireContext !== "organization") return;
     if (activeContext?.type !== "organization") return;
+    if (availableContexts !== null) return;
     let cancelled = false;
     setCheckingContexts(true);
     fetchContexts()
@@ -75,7 +76,15 @@ const ProtectedRoute = ({ children, requireContext }) => {
     return () => {
       cancelled = true;
     };
-  }, [authReady, isAuthenticated, requireContext, activeContext?.organizationId, fetchContexts]);
+  }, [
+    authReady,
+    isAuthenticated,
+    requireContext,
+    activeContext?.type,
+    activeContext?.organizationId,
+    availableContexts,
+    fetchContexts,
+  ]);
 
   if (!authReady) {
     return null;
