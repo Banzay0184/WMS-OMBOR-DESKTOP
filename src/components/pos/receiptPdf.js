@@ -1,11 +1,12 @@
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
-import { PAYMENT_LABEL, formatDate, formatMoney } from "./posApi";
+import { PAYMENT_LABEL, formatDate, formatMoney, formatSalePaymentLabel } from "./posApi";
 import {
   isBluetoothConnected,
   printSaleReceiptBluetooth,
 } from "./bluetoothPrinter";
 import { getReceiptPrintSettings, getResolvedReceiptLayout } from "./receiptPrintSettings";
+import { buildCustomerBalanceRows, getCardReceivedFromCustomer, getCashReceivedFromCustomer } from "./receiptBalance";
 
 /** @deprecated используйте getResolvedReceiptLayout */
 export const THERMAL_RECEIPT = {
@@ -177,6 +178,16 @@ export const THERMAL_RECEIPT_COMPONENT_CSS = `
     font-variant-numeric: tabular-nums;
     text-align: right;
   }
+  .receipt-summary .row.received-total {
+    margin-top: 5px;
+    padding-top: 5px;
+    border-top: 1px dashed #888;
+    font-size: calc(var(--receipt-meta-pt, 9pt) + 1pt);
+    font-weight: 800;
+  }
+  .receipt-summary .row.received-total .value {
+    font-weight: 800;
+  }
   .receipt-total {
     display: flex;
     justify-content: space-between;
@@ -195,6 +206,33 @@ export const THERMAL_RECEIPT_COMPONENT_CSS = `
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  .receipt-balance {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed #bbb;
+  }
+  .receipt-balance-title {
+    font-size: var(--receipt-meta-pt, 9pt);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+    color: #333;
+  }
+  .receipt-balance .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    font-size: var(--receipt-meta-pt, 9pt);
+    margin: 2px 0;
+  }
+  .receipt-balance .label { color: #555; }
+  .receipt-balance .value {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .receipt-balance .row.total .value { font-weight: 800; }
   .receipt-footer {
     text-align: center;
     font-size: var(--receipt-meta-pt, 9pt);
@@ -257,10 +295,7 @@ export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => 
 
   const layout = getResolvedReceiptLayout(organizationId);
   const settings = getReceiptPrintSettings(organizationId);
-  const paymentLabel =
-    PAYMENT_LABEL_THERMAL[sale.payment_type] ||
-    PAYMENT_LABEL[sale.payment_type] ||
-    sale.payment_type;
+  const paymentLabel = formatSalePaymentLabel(sale);
 
   const ornament = "· ".repeat(Math.max(8, Math.floor(layout.nameMaxLen / 2)));
 
@@ -304,6 +339,66 @@ export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => 
       `<div class="row"><span class="label">Долг</span><span class="value">${formatMoney(sale.remaining_debt)}</span></div>`
     );
   }
+  if (Number(sale.prepayment_applied) > 0) {
+    summaryRows.push(
+      `<div class="row"><span class="label">С баланса клиента</span><span class="value">${formatMoney(sale.prepayment_applied)}</span></div>`
+    );
+  }
+  const cashReceived = getCashReceivedFromCustomer(sale);
+  const cardReceived = getCardReceivedFromCustomer(sale);
+  const cashForGoods = Number(sale.cash_amount || 0);
+  if (
+    sale.payment_type === "cash" &&
+    Number(sale.prepayment_applied) > 0 &&
+    cashForGoods > 0
+  ) {
+    summaryRows.push(
+      `<div class="row"><span class="label">Наличными (покупка)</span><span class="value">${formatMoney(cashForGoods)}</span></div>`
+    );
+  }
+  if (cashReceived > 0 && (sale.payment_type === "cash" || sale.payment_type === "mixed")) {
+    summaryRows.push(
+      `<div class="row received-total"><span class="label">Получено наличными</span><span class="value">${formatMoney(cashReceived)} UZS</span></div>`
+    );
+  }
+  if (cardReceived > 0 && (sale.payment_type === "card" || sale.payment_type === "mixed")) {
+    summaryRows.push(
+      `<div class="row received-total"><span class="label">Получено картой</span><span class="value">${formatMoney(cardReceived)} UZS</span></div>`
+    );
+  }
+  if (Number(sale.debt_paid_from_payment) > 0) {
+    summaryRows.push(
+      `<div class="row"><span class="label">Из оплаты на долг</span><span class="value">${formatMoney(sale.debt_paid_from_payment)}</span></div>`
+    );
+  }
+  if (Number(sale.prepayment_deposited) > 0) {
+    summaryRows.push(
+      `<div class="row"><span class="label">На предоплату</span><span class="value">${formatMoney(sale.prepayment_deposited)}</span></div>`
+    );
+  }
+  if (
+    sale.payment_type === "cash" &&
+    Number(sale.cash_tendered) > Number(sale.cash_amount) &&
+    Number(sale.prepayment_deposited) === 0 &&
+    Number(sale.debt_paid_from_payment) === 0
+  ) {
+    summaryRows.push(
+      `<div class="row"><span class="label">Сдача</span><span class="value">${formatMoney(Number(sale.cash_tendered) - Number(sale.cash_amount))}</span></div>`
+    );
+  }
+
+  const balanceRows = buildCustomerBalanceRows(sale);
+  const balanceBlock = balanceRows.length
+    ? `<section class="receipt-balance" aria-label="Баланс клиента">
+        <div class="receipt-balance-title">Баланс клиента</div>
+        ${balanceRows
+          .map(
+            (row) =>
+              `<div class="row${row.tone ? ` ${row.tone}` : ""}"><span class="label">${escapeHtml(row.label)}</span><span class="value">${escapeHtml(row.value)}</span></div>`
+          )
+          .join("")}
+      </section>`
+    : "";
 
   const innBlock = settings.shopInn
     ? `<p class="receipt-inn">ИНН ${escapeHtml(settings.shopInn)}</p>`
@@ -351,6 +446,7 @@ export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => 
         <span class="total-label">ИТОГО</span>
         <span class="total-value">${formatMoney(sale.total_amount)} UZS</span>
       </div>
+      ${balanceBlock}
       ${footerBlock ? `<hr class="sep sep-light" />${footerBlock}` : ""}
       <div class="receipt-ornament" aria-hidden="true">${ornament}</div>
     </article>

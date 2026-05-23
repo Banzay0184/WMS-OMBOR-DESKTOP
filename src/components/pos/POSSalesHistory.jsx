@@ -9,6 +9,7 @@ import {
   formatMoney,
   posApi,
 } from "./posApi";
+import SalePaymentLabel from "./SalePaymentLabel";
 
 const INPUT_CLASS =
   "w-full px-3 py-2 rounded-lg border border-border bg-white text-muted text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
@@ -295,7 +296,9 @@ const POSSalesHistory = () => {
                     <tr key={s.id} className="border-t border-border hover:bg-secondary/30">
                       <td className="px-3 py-2 font-medium text-primary">{s.sale_number}</td>
                       <td className="px-3 py-2 text-muted">{formatDateTime(s.created_at)}</td>
-                      <td className="px-3 py-2 text-muted">{PAYMENT_LABEL[s.payment_type] || s.payment_type}</td>
+                      <td className="px-3 py-2">
+                        <SalePaymentLabel sale={s} />
+                      </td>
                       <td className="px-3 py-2">
                         <span className={"px-2 py-0.5 rounded-full text-xs " + statusCls}>{status}</span>
                       </td>

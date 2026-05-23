@@ -3,6 +3,7 @@ import { useAuth } from "../../context/AuthContext";
 import { authFetch } from "../../api/client";
 import { getImageUrl } from "../../config";
 import { formatPhoneDisplay, getPhoneDigits, PHONE_PLACEHOLDER } from "../../utils/phone";
+import { FaceIdSettings } from "../FaceIdSettings";
 
 const EyeIcon = ({ className }) => (
   <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -349,6 +350,14 @@ const AdminSettings = () => {
             {passwordLoading ? "Сохранение…" : "Изменить пароль"}
           </button>
         </form>
+      </section>
+
+      <section className="bg-white rounded-xl border border-border p-5 sm:p-6 shadow-sm">
+        <h2 className="text-lg font-medium text-muted mb-2">Face ID</h2>
+        <p className="text-sm text-muted mb-5">
+          Необязательно. Лицо хранится на сервере WMS. Один шаг: лицо в круг + проверка живости.
+        </p>
+        <FaceIdSettings />
       </section>
     </div>
   );

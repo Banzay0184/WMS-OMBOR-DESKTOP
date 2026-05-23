@@ -112,15 +112,16 @@ export const posApi = {
     return ensureOk(res, "Не удалось загрузить текущую смену");
   },
 
-  async openShift(orgId, { warehouseId, openingCash = 0, cashierId }) {
+  async openShift(orgId, { warehouseId, openingCash = 0, cashierId = null }) {
+    const body = {
+      warehouse_id: warehouseId,
+      opening_cash: String(Number(openingCash) || 0),
+    };
+    if (cashierId != null) body.cashier_id = cashierId;
     const res = await authFetch(`${base(orgId)}/shifts/open/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        warehouse_id: warehouseId,
-        cashier_id: cashierId,
-        opening_cash: String(Number(openingCash) || 0),
-      }),
+      body: JSON.stringify(body),
     });
     return ensureOk(res, "Не удалось открыть смену");
   },
@@ -149,7 +150,10 @@ export const posApi = {
 
 export const POS_STORAGE_KEYS = {
   warehouseId: (orgId) => `pos.warehouseId.${orgId}`,
+  parkedTickets: (orgId, warehouseId) => `pos.parkedTickets.${orgId}.${warehouseId}`,
 };
+
+export const MAX_POS_TICKETS = 5;
 
 export const moneyFmt = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
@@ -191,6 +195,47 @@ export const PAYMENT_LABEL = {
   card: "Карта",
   debt: "В долг",
   mixed: "Смешанная",
+};
+
+export const BALANCE_PAYMENT_LABEL = "Баланс клиента";
+
+/** Подпись способа оплаты с учётом зачёта с баланса клиента. */
+export const formatSalePaymentLabel = (sale) => {
+  if (!sale) return "—";
+  const prepApplied = Number(sale.prepayment_applied || 0);
+  const total = Number(sale.total_amount || 0);
+  const base = PAYMENT_LABEL[sale.payment_type] || sale.payment_type || "—";
+
+  if (!Number.isFinite(prepApplied) || prepApplied <= 0) {
+    return base;
+  }
+
+  const cashPart = Number(sale.cash_amount || 0);
+  const cardPart = Number(sale.card_amount || 0);
+  const debtPart = Number(sale.debt_amount_at_sale || 0);
+
+  if (prepApplied >= total - 0.001 && cashPart <= 0 && cardPart <= 0 && debtPart <= 0) {
+    return BALANCE_PAYMENT_LABEL;
+  }
+
+  return `${base} + баланс`;
+};
+
+/** Показывать сумму с баланса отдельной строкой (комбинированная оплата). */
+export const shouldShowBalancePaymentAmount = (sale) => {
+  const prepApplied = Number(sale?.prepayment_applied || 0);
+  if (!Number.isFinite(prepApplied) || prepApplied <= 0) return false;
+
+  const total = Number(sale?.total_amount || 0);
+  const cashPart = Number(sale?.cash_amount || 0);
+  const cardPart = Number(sale?.card_amount || 0);
+  const debtPart = Number(sale?.debt_amount_at_sale || 0);
+
+  if (cashPart <= 0 && cardPart <= 0 && debtPart <= 0) {
+    return false;
+  }
+
+  return prepApplied < total + 0.001;
 };
 
 export const STATUS_LABEL = {

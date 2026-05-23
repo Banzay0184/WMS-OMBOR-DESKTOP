@@ -114,6 +114,11 @@ const AppLayout = () => {
               Счёт‑фактуры
             </NavLink>
           ) : null}
+          {canOpenPos ? (
+            <NavLink to="/app/retail-sales" className={navLinkClass}>
+              Розничные продажи
+            </NavLink>
+          ) : null}
           {canSeeSuppliers ? (
             <NavLink to="/app/suppliers" className={navLinkClass}>
               Поставщики

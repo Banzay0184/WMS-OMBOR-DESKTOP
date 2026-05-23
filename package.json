@@ -12,6 +12,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "@vladmandic/face-api": "^1.7.15",
     "bwip-js": "^4.9.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",

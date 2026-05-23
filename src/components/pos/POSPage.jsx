@@ -5,10 +5,123 @@ import POSProductCostHistory from "./POSProductCostHistory";
 import POSReceiptModal from "./POSReceiptModal";
 import { printSaleReceipt } from "./receiptPdf";
 import { getReceiptPrintSettings } from "./receiptPrintSettings";
-import { formatMoney, posApi } from "./posApi";
+import { formatMoney, MAX_POS_TICKETS, posApi, POS_STORAGE_KEYS } from "./posApi";
 
 const INPUT_CLASS =
   "w-full px-3 py-2 rounded-lg border border-border bg-white text-muted text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
+
+const createTicket = (num) => ({
+  id: `ticket-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+  label: `Чек ${num}`,
+  cart: [],
+});
+
+const cartTotal = (items) =>
+  (Array.isArray(items) ? items : []).reduce(
+    (sum, it) => sum + Number(it.unit_price || 0) * (it.quantity || 0),
+    0
+  );
+
+const loadParkedTickets = (organizationId, warehouseId) => {
+  if (!organizationId || !warehouseId) return null;
+  try {
+    const raw = sessionStorage.getItem(POS_STORAGE_KEYS.parkedTickets(organizationId, warehouseId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.tickets) || parsed.tickets.length === 0) return null;
+    if (parsed.tickets.length > MAX_POS_TICKETS) return null;
+    const activeTicketId = parsed.tickets.some((t) => t.id === parsed.activeTicketId)
+      ? parsed.activeTicketId
+      : parsed.tickets[0].id;
+    return { tickets: parsed.tickets, activeTicketId };
+  } catch {
+    return null;
+  }
+};
+
+const saveParkedTickets = (organizationId, warehouseId, tickets, activeTicketId) => {
+  if (!organizationId || !warehouseId) return;
+  try {
+    sessionStorage.setItem(
+      POS_STORAGE_KEYS.parkedTickets(organizationId, warehouseId),
+      JSON.stringify({ tickets, activeTicketId })
+    );
+  } catch {
+    // sessionStorage недоступен
+  }
+};
+
+const TicketTabs = ({
+  tickets,
+  activeTicketId,
+  onSwitch,
+  onNew,
+  onClose,
+  maxTickets,
+}) => (
+  <div className="px-2 py-2 border-b border-border flex items-center gap-1 overflow-x-auto">
+    {tickets.map((ticket) => {
+      const isActive = ticket.id === activeTicketId;
+      const count = ticket.cart.length;
+      const total = cartTotal(ticket.cart);
+      return (
+        <div key={ticket.id} className="flex items-center shrink-0">
+          <button
+            type="button"
+            onClick={() => onSwitch(ticket.id)}
+            aria-label={`Переключиться на ${ticket.label}`}
+            aria-pressed={isActive}
+            tabIndex={0}
+            className={
+              "px-2.5 py-1.5 rounded-lg text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-primary/30 " +
+              (isActive
+                ? "bg-primary text-white shadow-soft"
+                : "bg-secondary text-muted hover:bg-secondary/80 hover:text-primary")
+            }
+          >
+            <span>{ticket.label}</span>
+            {count > 0 ? (
+              <span className={"ml-1 tabular-nums " + (isActive ? "text-white/90" : "text-muted")}>
+                ({count})
+              </span>
+            ) : null}
+            {total > 0 ? (
+              <span
+                className={
+                  "ml-1 hidden sm:inline tabular-nums " + (isActive ? "text-white/80" : "text-muted/80")
+                }
+              >
+                · {formatMoney(total)}
+              </span>
+            ) : null}
+          </button>
+          {tickets.length > 1 ? (
+            <button
+              type="button"
+              onClick={(e) => onClose(ticket.id, e)}
+              aria-label={`Закрыть ${ticket.label}`}
+              tabIndex={0}
+              className="ml-0.5 w-6 h-6 rounded text-muted hover:text-red-600 hover:bg-red-50 text-sm focus:outline-none focus:ring-2 focus:ring-red-300"
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
+      );
+    })}
+    {tickets.length < maxTickets ? (
+      <button
+        type="button"
+        onClick={onNew}
+        aria-label="Новый чек"
+        tabIndex={0}
+        className="shrink-0 w-8 h-8 rounded-lg border border-dashed border-border text-muted hover:border-primary hover:text-primary hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary/30 text-lg leading-none"
+      >
+        +
+      </button>
+    ) : null}
+  </div>
+);
 
 const ProductCard = ({ product, onAdd, onViewCostHistory, disabled, canViewCost }) => {
   const lowStock = product.stock <= 3 && product.stock > 0;
@@ -188,7 +301,10 @@ const PaymentModal = ({ open, total, onClose, onConfirm, customers, onReloadCust
   const [paymentType, setPaymentType] = useState("cash");
   const [cashAmount, setCashAmount] = useState("");
   const [cardAmount, setCardAmount] = useState("");
+  const [receivedCash, setReceivedCash] = useState("");
+  const [receivedCard, setReceivedCard] = useState("");
   const [customerId, setCustomerId] = useState("");
+  const [usePrepayment, setUsePrepayment] = useState(true);
   const [newCustomer, setNewCustomer] = useState({ name: "", phone: "" });
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -199,7 +315,10 @@ const PaymentModal = ({ open, total, onClose, onConfirm, customers, onReloadCust
       setPaymentType("cash");
       setCashAmount("");
       setCardAmount("");
+      setReceivedCash("");
+      setReceivedCard("");
       setCustomerId("");
+      setUsePrepayment(true);
       setNewCustomer({ name: "", phone: "" });
       setError("");
     }
@@ -207,20 +326,72 @@ const PaymentModal = ({ open, total, onClose, onConfirm, customers, onReloadCust
 
   if (!open) return null;
 
+  const selectedCustomer = customerId
+    ? customers.find((c) => Number(c.id) === Number(customerId))
+    : null;
+  const prepaymentBalance = Number(selectedCustomer?.prepayment_balance || 0);
+  const customerDebt = Number(selectedCustomer?.total_debt || 0);
+  const prepaymentApplied =
+    selectedCustomer && usePrepayment ? Math.min(prepaymentBalance, total) : 0;
+  const amountDue = Math.max(total - prepaymentApplied, 0);
+
   const parsedCash = Number(cashAmount) || 0;
   const parsedCard = Number(cardAmount) || 0;
-  const debtAmount = Math.max(total - parsedCash - parsedCard, 0);
-  const requireCustomer = paymentType === "debt" || (paymentType === "mixed" && debtAmount > 0);
-  const paymentExceedsTotal = paymentType === "mixed" && parsedCash + parsedCard > total;
+  const parsedReceivedCash = receivedCash.trim() === "" ? amountDue : Number(receivedCash) || 0;
+  const parsedReceivedCard = receivedCard.trim() === "" ? amountDue : Number(receivedCard) || 0;
+  const mixedTotalPaid = parsedCash + parsedCard;
+  const debtAmount = Math.max(amountDue - parsedCash - parsedCard, 0);
+  const mixedSurplus = paymentType === "mixed" && customerId ? Math.max(mixedTotalPaid - amountDue, 0) : 0;
+  const cashSurplus =
+    paymentType === "cash" && customerId && parsedReceivedCash > amountDue
+      ? parsedReceivedCash - amountDue
+      : 0;
+  const cardSurplus =
+    paymentType === "card" && customerId && parsedReceivedCard > amountDue
+      ? parsedReceivedCard - amountDue
+      : 0;
+  const paymentSurplus = mixedSurplus || cashSurplus || cardSurplus;
+  const debtPaidFromSurplus = customerId ? Math.min(paymentSurplus, customerDebt) : 0;
+  const prepaymentDeposit = customerId ? Math.max(paymentSurplus - debtPaidFromSurplus, 0) : 0;
+  const changeAmount =
+    paymentType === "cash" && !customerId && parsedReceivedCash > amountDue
+      ? parsedReceivedCash - amountDue
+      : 0;
+  const insufficientCash = paymentType === "cash" && amountDue > 0 && parsedReceivedCash < amountDue;
+  const insufficientCard = paymentType === "card" && amountDue > 0 && parsedReceivedCard < amountDue;
+  const mixedOverpayWithoutCustomer =
+    paymentType === "mixed" && !customerId && mixedTotalPaid > amountDue;
+  const cardOverpayWithoutCustomer =
+    paymentType === "card" && !customerId && parsedReceivedCard > amountDue;
+  const requireCustomer =
+    paymentType === "debt" ||
+    (paymentType === "mixed" && debtAmount > 0) ||
+    cashSurplus > 0 ||
+    cardSurplus > 0 ||
+    mixedSurplus > 0;
+  const showOptionalCustomer =
+    paymentType === "cash" || paymentType === "card" || paymentType === "mixed";
 
   const handleConfirm = async () => {
     setError("");
-    if (paymentType === "mixed" && paymentExceedsTotal) {
-      setError("Сумма наличных и карты не может превышать итог чека.");
+    if (mixedOverpayWithoutCustomer) {
+      setError("При переплате укажите клиента — остаток зачисляется на предоплату.");
+      return;
+    }
+    if (cardOverpayWithoutCustomer) {
+      setError("При переплате картой укажите клиента — остаток зачисляется на предоплату.");
+      return;
+    }
+    if (insufficientCash) {
+      setError("Недостаточно наличных для оплаты.");
+      return;
+    }
+    if (insufficientCard) {
+      setError("Недостаточно средств по карте для оплаты.");
       return;
     }
     if (requireCustomer && !customerId && !newCustomer.name.trim()) {
-      setError("Для продажи с долгом нужно выбрать или создать клиента.");
+      setError("Выберите или создайте клиента.");
       return;
     }
     setSubmitting(true);
@@ -238,9 +409,12 @@ const PaymentModal = ({ open, total, onClose, onConfirm, customers, onReloadCust
       }
       await onConfirm({
         paymentType,
-        customerId: finalCustomerId,
+        customerId: finalCustomerId || (customerId ? Number(customerId) : null),
         cashAmount: parsedCash,
         cardAmount: parsedCard,
+        receivedCash: paymentType === "cash" ? parsedReceivedCash : null,
+        receivedCard: paymentType === "card" ? parsedReceivedCard : null,
+        usePrepayment: Boolean((finalCustomerId || customerId) && usePrepayment),
       });
     } catch (err) {
       setError(err.message || "Не удалось оформить");
@@ -259,7 +433,19 @@ const PaymentModal = ({ open, total, onClose, onConfirm, customers, onReloadCust
       <div className="bg-white rounded-2xl shadow-soft w-full max-w-md p-6 space-y-4">
         <div>
           <h2 className="text-lg font-semibold text-primary">Оплата</h2>
-          <p className="text-sm text-muted">К оплате: <span className="font-semibold text-primary">{formatMoney(total)} UZS</span></p>
+          <p className="text-sm text-muted">
+            Итог: <span className="font-semibold text-primary">{formatMoney(total)} UZS</span>
+          </p>
+          {prepaymentApplied > 0 ? (
+            <p className="text-xs text-emerald-700 mt-1">
+              Зачтено с предоплаты: {formatMoney(prepaymentApplied)} UZS · к оплате{" "}
+              {formatMoney(amountDue)} UZS
+            </p>
+          ) : selectedCustomer && prepaymentBalance > 0 && !usePrepayment ? (
+            <p className="text-xs text-muted mt-1">
+              Баланс предоплаты не списывается · к оплате {formatMoney(amountDue)} UZS
+            </p>
+          ) : null}
         </div>
 
         <div className="grid grid-cols-2 gap-2">
@@ -287,6 +473,80 @@ const PaymentModal = ({ open, total, onClose, onConfirm, customers, onReloadCust
             </button>
           ))}
         </div>
+
+        {paymentType === "cash" ? (
+          <div className="space-y-2 rounded-xl border border-border bg-secondary/40 p-3">
+            <div>
+              <label className="text-xs text-muted block mb-1" htmlFor="payment-received-cash">
+                Получено наличными (UZS)
+              </label>
+              <input
+                id="payment-received-cash"
+                type="number"
+                min="0"
+                step="1000"
+                value={receivedCash}
+                onChange={(e) => setReceivedCash(e.target.value)}
+                placeholder={String(amountDue || total)}
+                aria-label="Сумма полученная от клиента"
+                className={INPUT_CLASS}
+              />
+            </div>
+            {prepaymentDeposit > 0 && paymentType === "cash" ? (
+              <p className="text-xs text-emerald-700">
+                На предоплату: {formatMoney(prepaymentDeposit)} UZS
+              </p>
+            ) : null}
+            {debtPaidFromSurplus > 0 && paymentType === "cash" ? (
+              <p className="text-xs text-amber-700">
+                Погашение долга: −{formatMoney(debtPaidFromSurplus)} UZS
+              </p>
+            ) : null}
+            {changeAmount > 0 ? (
+              <p className="text-xs text-muted">Сдача: {formatMoney(changeAmount)} UZS</p>
+            ) : null}
+            {insufficientCash ? (
+              <p className="text-xs text-red-600">Недостаточно наличных для оплаты.</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {paymentType === "card" ? (
+          <div className="space-y-2 rounded-xl border border-border bg-secondary/40 p-3">
+            <div>
+              <label className="text-xs text-muted block mb-1" htmlFor="payment-received-card">
+                Получено картой (UZS)
+              </label>
+              <input
+                id="payment-received-card"
+                type="number"
+                min="0"
+                step="1000"
+                value={receivedCard}
+                onChange={(e) => setReceivedCard(e.target.value)}
+                placeholder={String(amountDue || total)}
+                aria-label="Сумма списанная с карты клиента"
+                className={INPUT_CLASS}
+              />
+            </div>
+            {prepaymentDeposit > 0 && paymentType === "card" ? (
+              <p className="text-xs text-emerald-700">
+                На предоплату: {formatMoney(prepaymentDeposit)} UZS
+              </p>
+            ) : null}
+            {debtPaidFromSurplus > 0 && paymentType === "card" ? (
+              <p className="text-xs text-amber-700">
+                Погашение долга: −{formatMoney(debtPaidFromSurplus)} UZS
+              </p>
+            ) : null}
+            {cardOverpayWithoutCustomer ? (
+              <p className="text-xs text-amber-700">Укажите клиента для зачисления переплаты на баланс.</p>
+            ) : null}
+            {insufficientCard ? (
+              <p className="text-xs text-red-600">Недостаточно средств по карте для оплаты.</p>
+            ) : null}
+          </div>
+        ) : null}
 
         {paymentType === "mixed" ? (
           <div className="space-y-2 rounded-xl border border-border bg-secondary/40 p-3">
@@ -330,16 +590,25 @@ const PaymentModal = ({ open, total, onClose, onConfirm, customers, onReloadCust
                 {formatMoney(debtAmount)} UZS
               </span>
             </div>
-            {paymentExceedsTotal ? (
-              <p className="text-xs text-red-600">Сумма наличных и карты превышает итог чека.</p>
+            {mixedSurplus > 0 ? (
+              <p className="text-xs text-emerald-700">
+                Переплата {formatMoney(mixedSurplus)} UZS
+                {prepaymentDeposit > 0 ? ` · на предоплату ${formatMoney(prepaymentDeposit)}` : ""}
+                {debtPaidFromSurplus > 0 ? ` · на долг ${formatMoney(debtPaidFromSurplus)}` : ""}
+              </p>
+            ) : null}
+            {mixedOverpayWithoutCustomer ? (
+              <p className="text-xs text-amber-700">Укажите клиента для зачисления переплаты на баланс.</p>
             ) : null}
           </div>
         ) : null}
 
-        {requireCustomer ? (
+        {(requireCustomer || showOptionalCustomer) ? (
           <div className="space-y-2 rounded-xl border border-border bg-secondary/40 p-3">
             <label className="text-xs text-muted block" htmlFor="payment-customer">
-              Выберите клиента
+              {showOptionalCustomer && !requireCustomer
+                ? "Клиент (необязательно, для предоплаты)"
+                : "Выберите клиента"}
             </label>
             <select
               id="payment-customer"
@@ -347,14 +616,49 @@ const PaymentModal = ({ open, total, onClose, onConfirm, customers, onReloadCust
               onChange={(e) => setCustomerId(e.target.value)}
               className={INPUT_CLASS}
             >
-              <option value="">— новый клиент —</option>
+              <option value="">— {requireCustomer ? "новый клиент" : "без клиента"} —</option>
               {customers.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name} {c.phone ? `(${c.phone})` : ""} {Number(c.total_debt) > 0 ? `· долг ${formatMoney(c.total_debt)}` : ""}
+                  {c.name} {c.phone ? `(${c.phone})` : ""}
+                  {Number(c.total_debt) > 0 ? ` · долг ${formatMoney(c.total_debt)}` : ""}
+                  {Number(c.prepayment_balance) > 0
+                    ? ` · предоплата ${formatMoney(c.prepayment_balance)}`
+                    : ""}
                 </option>
               ))}
             </select>
-            {!customerId ? (
+            {selectedCustomer ? (
+              <div className="rounded-lg bg-white border border-border px-3 py-2 text-xs space-y-2">
+                {customerDebt > 0 ? (
+                  <p className="text-amber-800">
+                    Долг клиента: <span className="font-semibold">{formatMoney(customerDebt)} UZS</span>
+                  </p>
+                ) : null}
+                {prepaymentBalance > 0 ? (
+                  <p className="text-emerald-800">
+                    Предоплата: <span className="font-semibold">{formatMoney(prepaymentBalance)} UZS</span>
+                  </p>
+                ) : null}
+                {prepaymentBalance > 0 ? (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={usePrepayment}
+                      onChange={(e) => setUsePrepayment(e.target.checked)}
+                      className="rounded border-border text-primary focus:ring-primary/30"
+                      aria-label="Списать с баланса предоплаты"
+                    />
+                    <span className="text-muted">Списать с баланса предоплаты</span>
+                  </label>
+                ) : null}
+                {paymentSurplus > 0 && customerDebt > 0 ? (
+                  <p className="text-muted">
+                    Переплата сначала погашает долг, остаток — на предоплату.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {requireCustomer && !customerId ? (
               <div className="grid grid-cols-2 gap-2 pt-2">
                 <input
                   type="text"
@@ -395,7 +699,7 @@ const PaymentModal = ({ open, total, onClose, onConfirm, customers, onReloadCust
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={submitting || creating || paymentExceedsTotal}
+            disabled={submitting || creating || insufficientCash || insufficientCard || mixedOverpayWithoutCustomer || cardOverpayWithoutCustomer}
             tabIndex={0}
             aria-label="Завершить продажу"
             className="px-5 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
@@ -421,13 +725,53 @@ const POSPage = () => {
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [productsError, setProductsError] = useState("");
 
-  const [cart, setCart] = useState([]);
+  const [tickets, setTickets] = useState(() => [createTicket(1)]);
+  const [activeTicketId, setActiveTicketId] = useState(() => tickets[0]?.id);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [receiptSale, setReceiptSale] = useState(null);
   const [customers, setCustomers] = useState([]);
   const [costHistoryProduct, setCostHistoryProduct] = useState(null);
 
   const searchInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!organizationId || !warehouseId) return;
+    const saved = loadParkedTickets(organizationId, warehouseId);
+    if (saved) {
+      setTickets(saved.tickets);
+      setActiveTicketId(saved.activeTicketId);
+      return;
+    }
+    const initial = createTicket(1);
+    setTickets([initial]);
+    setActiveTicketId(initial.id);
+  }, [organizationId, warehouseId]);
+
+  useEffect(() => {
+    saveParkedTickets(organizationId, warehouseId, tickets, activeTicketId);
+  }, [organizationId, warehouseId, tickets, activeTicketId]);
+
+  const activeTicket = useMemo(
+    () => tickets.find((t) => t.id === activeTicketId) ?? tickets[0],
+    [tickets, activeTicketId]
+  );
+  const cart = activeTicket?.cart ?? [];
+
+  const setActiveCart = useCallback(
+    (updater) => {
+      setTickets((prev) =>
+        prev.map((t) =>
+          t.id === activeTicketId
+            ? {
+                ...t,
+                cart: typeof updater === "function" ? updater(t.cart) : updater,
+              }
+            : t
+        )
+      );
+    },
+    [activeTicketId]
+  );
 
   // Debounce поиск
   useEffect(() => {
@@ -476,67 +820,155 @@ const POSPage = () => {
     setCostHistoryProduct(product);
   }, [canViewCost]);
 
-  const handleAddProduct = useCallback((product) => {
-    if (!salesEnabled) return;
-    if (product.stock <= 0) return;
-    const defaultPrice = Number(product.sale_price);
-    const unitPrice =
-      Number.isFinite(defaultPrice) && defaultPrice > 0 ? defaultPrice : 0;
-    setCart((prev) => {
-      const existing = prev.find((it) => it.product_id === product.id);
-      if (existing) {
-        const nextQty = Math.min(existing.quantity + 1, product.stock);
-        if (nextQty === existing.quantity) return prev;
-        return prev.map((it) =>
-          it.product_id === product.id
-            ? {
-                ...it,
-                quantity: nextQty,
-                unit_price:
-                  Number(it.unit_price) > 0 ? it.unit_price : unitPrice,
-              }
-            : it
-        );
+  const handleAddProduct = useCallback(
+    (product) => {
+      if (!salesEnabled) return;
+      if (product.stock <= 0) return;
+      const defaultPrice = Number(product.sale_price);
+      const unitPrice = Number.isFinite(defaultPrice) && defaultPrice > 0 ? defaultPrice : 0;
+
+      setTickets((prev) =>
+        prev.map((t) => {
+          if (t.id !== activeTicketId) return t;
+
+          const reservedElsewhere = prev
+            .filter((other) => other.id !== activeTicketId)
+            .reduce((sum, other) => {
+              const line = other.cart.find((it) => it.product_id === product.id);
+              return sum + (line?.quantity || 0);
+            }, 0);
+          const maxAvailable = Math.max(product.stock - reservedElsewhere, 0);
+          if (maxAvailable <= 0) return t;
+
+          const existing = t.cart.find((it) => it.product_id === product.id);
+          if (existing) {
+            const nextQty = Math.min(existing.quantity + 1, maxAvailable);
+            if (nextQty === existing.quantity) return t;
+            return {
+              ...t,
+              cart: t.cart.map((it) =>
+                it.product_id === product.id
+                  ? {
+                      ...it,
+                      quantity: nextQty,
+                      stock: product.stock,
+                      unit_price: Number(it.unit_price) > 0 ? it.unit_price : unitPrice,
+                    }
+                  : it
+              ),
+            };
+          }
+
+          return {
+            ...t,
+            cart: [
+              ...t.cart,
+              {
+                product_id: product.id,
+                name: product.name,
+                upc: product.upc,
+                unit: product.unit,
+                stock: product.stock,
+                quantity: 1,
+                unit_price: unitPrice,
+              },
+            ],
+          };
+        })
+      );
+    },
+    [salesEnabled, activeTicketId]
+  );
+
+  const handleChangeQty = useCallback(
+    (productId, qty) => {
+      setTickets((prev) =>
+        prev.map((t) => {
+          if (t.id !== activeTicketId) return t;
+          return {
+            ...t,
+            cart: t.cart
+              .map((it) => {
+                if (it.product_id !== productId) return it;
+                const reservedElsewhere = prev
+                  .filter((other) => other.id !== activeTicketId)
+                  .reduce((sum, other) => {
+                    const line = other.cart.find((c) => c.product_id === productId);
+                    return sum + (line?.quantity || 0);
+                  }, 0);
+                const maxAvailable = Math.max(it.stock - reservedElsewhere, 1);
+                return {
+                  ...it,
+                  quantity: Math.max(1, Math.min(Number(qty) || 1, maxAvailable)),
+                };
+              }),
+          };
+        })
+      );
+    },
+    [activeTicketId]
+  );
+
+  const handleChangePrice = useCallback(
+    (productId, price) => {
+      setActiveCart((prev) =>
+        prev.map((it) => (it.product_id === productId ? { ...it, unit_price: price } : it))
+      );
+    },
+    [setActiveCart]
+  );
+
+  const handleRemove = useCallback(
+    (productId) => {
+      setActiveCart((prev) => prev.filter((it) => it.product_id !== productId));
+    },
+    [setActiveCart]
+  );
+
+  const handleClearCart = useCallback(() => {
+    setActiveCart([]);
+  }, [setActiveCart]);
+
+  const handleSwitchTicket = useCallback((ticketId) => {
+    setActiveTicketId(ticketId);
+    if (searchInputRef.current) searchInputRef.current.focus();
+  }, []);
+
+  const handleNewTicket = useCallback(() => {
+    if (tickets.length >= MAX_POS_TICKETS) return;
+    const ticket = createTicket(tickets.length + 1);
+    setTickets((prev) => [...prev, ticket]);
+    setActiveTicketId(ticket.id);
+    if (searchInputRef.current) searchInputRef.current.focus();
+  }, [tickets.length]);
+
+  const handleCloseTicket = useCallback(
+    (ticketId, event) => {
+      event?.stopPropagation();
+      const target = tickets.find((t) => t.id === ticketId);
+      if (target?.cart?.length > 0) {
+        const ok = window.confirm(`${target.label}: удалить чек с товарами?`);
+        if (!ok) return;
       }
-      return [
-        ...prev,
-        {
-          product_id: product.id,
-          name: product.name,
-          upc: product.upc,
-          unit: product.unit,
-          stock: product.stock,
-          quantity: 1,
-          unit_price: unitPrice,
-        },
-      ];
-    });
-  }, [salesEnabled]);
 
-  const handleChangeQty = useCallback((productId, qty) => {
-    setCart((prev) =>
-      prev
-        .map((it) =>
-          it.product_id === productId
-            ? { ...it, quantity: Math.max(1, Math.min(Number(qty) || 1, it.stock)) }
-            : it
-        )
-    );
-  }, []);
-
-  const handleChangePrice = useCallback((productId, price) => {
-    setCart((prev) =>
-      prev.map((it) =>
-        it.product_id === productId ? { ...it, unit_price: price } : it
-      )
-    );
-  }, []);
-
-  const handleRemove = useCallback((productId) => {
-    setCart((prev) => prev.filter((it) => it.product_id !== productId));
-  }, []);
-
-  const handleClearCart = () => setCart([]);
+      setTickets((prev) => {
+        if (prev.length <= 1) {
+          const fresh = createTicket(1);
+          setActiveTicketId(fresh.id);
+          return [fresh];
+        }
+        const next = prev.filter((t) => t.id !== ticketId).map((t, index) => ({
+          ...t,
+          label: `Чек ${index + 1}`,
+        }));
+        if (activeTicketId === ticketId) {
+          setActiveTicketId(next[0]?.id ?? "");
+        }
+        return next;
+      });
+    },
+    [tickets, activeTicketId]
+  );
 
   const total = useMemo(
     () =>
@@ -545,7 +977,7 @@ const POSPage = () => {
   );
 
   const handleConfirmPayment = useCallback(
-    async ({ paymentType, customerId, cashAmount, cardAmount }) => {
+    async ({ paymentType, customerId, cashAmount, cardAmount, receivedCash, receivedCard, usePrepayment }) => {
       if (cart.length === 0) return;
       if (cart.some((it) => Number(it.unit_price) <= 0)) {
         throw new Error("Укажите цену для каждой позиции.");
@@ -564,9 +996,32 @@ const POSPage = () => {
         payload.cash_amount = String(Number(cashAmount || 0).toFixed(2));
         payload.card_amount = String(Number(cardAmount || 0).toFixed(2));
       }
+      if (paymentType === "cash" && receivedCash != null) {
+        payload.received_cash = String(Number(receivedCash || 0).toFixed(2));
+      }
+      if (paymentType === "card" && receivedCard != null) {
+        payload.received_card = String(Number(receivedCard || 0).toFixed(2));
+      }
+      if (customerId) {
+        payload.use_prepayment = usePrepayment !== false;
+      }
       const sale = await posApi.createSale(organizationId, payload);
       setPaymentOpen(false);
-      setCart([]);
+      setTickets((prev) => {
+        const next = prev.filter((t) => t.id !== activeTicketId).map((t, index) => ({
+          ...t,
+          label: `Чек ${index + 1}`,
+        }));
+        if (next.length === 0) {
+          const fresh = createTicket(1);
+          setActiveTicketId(fresh.id);
+          return [fresh];
+        }
+        if (!next.some((t) => t.id === activeTicketId)) {
+          setActiveTicketId(next[0].id);
+        }
+        return next;
+      });
       setReceiptSale(sale);
       const printSettings = getReceiptPrintSettings(organizationId);
       if (printSettings.autoPrintOnSale) {
@@ -581,7 +1036,7 @@ const POSPage = () => {
       await reloadOverview();
       if (searchInputRef.current) searchInputRef.current.focus();
     },
-    [cart, warehouseId, organizationId, storeName, loadProducts, loadCustomers, reloadOverview]
+    [cart, warehouseId, organizationId, storeName, loadProducts, loadCustomers, reloadOverview, activeTicketId]
   );
 
   const handleCreateCustomer = useCallback(
@@ -638,23 +1093,37 @@ const POSPage = () => {
 
       {/* Правая колонка: корзина */}
       <aside className="rounded-xl bg-white border border-border shadow-soft flex flex-col h-fit lg:sticky lg:top-32">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-primary">Чек ({cart.length})</h2>
+        <TicketTabs
+          tickets={tickets}
+          activeTicketId={activeTicketId}
+          onSwitch={handleSwitchTicket}
+          onNew={handleNewTicket}
+          onClose={handleCloseTicket}
+          maxTickets={MAX_POS_TICKETS}
+        />
+        <div className="px-4 py-2 border-b border-border flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-primary truncate">
+            {activeTicket?.label ?? "Чек"} ({cart.length})
+          </h2>
+          <span className="text-[10px] text-muted shrink-0">
+            {tickets.length}/{MAX_POS_TICKETS}
+          </span>
           {cart.length > 0 ? (
             <button
               type="button"
               onClick={handleClearCart}
               aria-label="Очистить чек"
               tabIndex={0}
-              className="text-xs text-muted hover:text-red-600 transition focus:outline-none focus:ring-2 focus:ring-primary/30 rounded px-1"
+              className="text-xs text-muted hover:text-red-600 transition focus:outline-none focus:ring-2 focus:ring-primary/30 rounded px-1 shrink-0"
             >
               Очистить
             </button>
           ) : null}
         </div>
         {cart.length === 0 ? (
-          <div className="p-6 text-center text-sm text-muted">
-            Добавьте товар, нажав на карточку слева.
+          <div className="p-6 text-center text-sm text-muted space-y-1">
+            <p>Добавьте товар, нажав на карточку слева.</p>
+            <p className="text-xs">До {MAX_POS_TICKETS} чеков — кнопка «+» сверху.</p>
           </div>
         ) : (
           <ul className="max-h-[50vh] overflow-y-auto">

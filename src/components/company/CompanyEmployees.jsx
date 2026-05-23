@@ -23,6 +23,7 @@ const CompanyEmployees = () => {
   const [editingMemberId, setEditingMemberId] = useState(null);
   const [editMemberRoleId, setEditMemberRoleId] = useState("");
   const [editMemberLoading, setEditMemberLoading] = useState(false);
+  const [editMemberError, setEditMemberError] = useState("");
   const [confirmRemoveMemberId, setConfirmRemoveMemberId] = useState(null);
   const [removeMemberLoading, setRemoveMemberLoading] = useState(false);
   const [forbiddenOrganization, setForbiddenOrganization] = useState(false);
@@ -115,8 +116,8 @@ const CompanyEmployees = () => {
       setAddError("Нет прав.");
       return;
     }
-    const rolePayload = addRoleId ? (roles.find((r) => r.id === parseInt(addRoleId, 10))?.code ?? addRoleId) : null;
-    if (!rolePayload) {
+    const roleId = addRoleId ? parseInt(addRoleId, 10) : null;
+    if (!roleId || Number.isNaN(roleId)) {
       setAddError("Выберите роль");
       return;
     }
@@ -129,7 +130,7 @@ const CompanyEmployees = () => {
         body: JSON.stringify({
           phone: getPhoneDigits(addPhone) || addPhone.trim(),
           full_name: addFullName.trim() || undefined,
-          role: rolePayload,
+          role: roleId,
           is_active: addIsActive,
         }),
       });
@@ -190,20 +191,27 @@ const CompanyEmployees = () => {
   const handleMemberRoleSubmit = async (e) => {
     e.preventDefault();
     if (!organizationId || !editingMemberId) return;
-    const rolePayload = roles.find((r) => r.id === parseInt(editMemberRoleId, 10))?.code ?? editMemberRoleId;
-    if (!rolePayload) return;
+    const roleId = parseInt(editMemberRoleId, 10);
+    if (!roleId || Number.isNaN(roleId)) {
+      setEditMemberError("Выберите роль");
+      return;
+    }
+    setEditMemberError("");
     setEditMemberLoading(true);
     try {
       const res = await authFetch(
         `platform/organizations/${organizationId}/members/${editingMemberId}/`,
-        { method: "PATCH", body: JSON.stringify({ role: rolePayload }) }
+        { method: "PATCH", body: JSON.stringify({ role: roleId }) }
       );
-      if (res.ok) {
-        setEditingMemberId(null);
-        loadMembers();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEditMemberError(data.role?.[0] ?? data.detail ?? "Не удалось сохранить роль");
+        return;
       }
-    } catch {
-      // ignore
+      setEditingMemberId(null);
+      loadMembers();
+    } catch (err) {
+      setEditMemberError(err.message ?? "Ошибка сети");
     } finally {
       setEditMemberLoading(false);
     }
@@ -333,6 +341,7 @@ const CompanyEmployees = () => {
                               onClick={() => {
                                 setEditingMemberId(m.id);
                                 setEditMemberRoleId(m.role_id?.toString() ?? "");
+                                setEditMemberError("");
                               }}
                               className="text-sm px-2 py-1 rounded border border-border text-muted hover:bg-secondary transition"
                             >
@@ -517,6 +526,11 @@ const CompanyEmployees = () => {
                   ))}
                 </select>
               </div>
+              {editMemberError ? (
+                <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2" role="alert">
+                  {editMemberError}
+                </p>
+              ) : null}
               <div className="flex gap-2">
                 <button
                   type="submit"

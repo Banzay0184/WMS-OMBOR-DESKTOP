@@ -1,8 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_URL, COMPANY } from "../config";
 import { useAuth } from "../context/AuthContext";
 import { resolveSingleContextTarget } from "../utils/contextZones";
+import { formatPhoneDisplay, getPhoneDigits, PHONE_PLACEHOLDER } from "../utils/phone";
+import { isCameraAvailable } from "../utils/faceRecognition";
+import FaceCaptureModal from "./FaceCaptureModal";
+import { loginWithFaceId } from "./FaceIdSettings";
 
 const EyeIcon = ({ className }) => (
   <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -17,8 +21,6 @@ const EyeOffIcon = ({ className }) => (
   </svg>
 );
 
-import { formatPhoneDisplay, getPhoneDigits, PHONE_PLACEHOLDER } from "../utils/phone";
-
 const LoginPage = () => {
   const navigate = useNavigate();
   const { login, setActiveContext, clearActiveContext } = useAuth();
@@ -27,6 +29,44 @@ const LoginPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [faceIdLoading, setFaceIdLoading] = useState(false);
+  const [faceIdSupported, setFaceIdSupported] = useState(false);
+  const [faceCaptureOpen, setFaceCaptureOpen] = useState(false);
+  const [pendingPhoneDigits, setPendingPhoneDigits] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void isCameraAvailable().then((available) => {
+      if (active) setFaceIdSupported(available);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleLoginSuccess = (data) => {
+    if (!data.access || !data.user) return false;
+    const tokens = { access: data.access, refresh: data.refresh ?? null };
+    const contexts = data.available_contexts ?? null;
+    login(data.user, tokens, contexts);
+
+    const singleTarget = resolveSingleContextTarget(contexts);
+    if (singleTarget) {
+      if (singleTarget.type === "platform") {
+        setActiveContext("platform");
+      } else if (singleTarget.type === "pos") {
+        setActiveContext("pos", singleTarget.organizationId);
+      } else {
+        setActiveContext("organization", singleTarget.organizationId);
+      }
+      navigate(singleTarget.path);
+      return true;
+    }
+
+    clearActiveContext();
+    navigate("/select-context");
+    return true;
+  };
 
   const handleTogglePassword = () => setShowPassword((prev) => !prev);
   const handlePhoneChange = (e) => setPhone(formatPhoneDisplay(e.target.value));
@@ -64,31 +104,38 @@ const LoginPage = () => {
       }
 
       if (data.access && data.user) {
-        const tokens = { access: data.access, refresh: data.refresh ?? null };
-        const contexts = data.available_contexts ?? null;
-        login(data.user, tokens, contexts);
-
-        const singleTarget = resolveSingleContextTarget(contexts);
-
-        if (singleTarget) {
-          if (singleTarget.type === "platform") {
-            setActiveContext("platform");
-          } else if (singleTarget.type === "pos") {
-            setActiveContext("pos", singleTarget.organizationId);
-          } else {
-            setActiveContext("organization", singleTarget.organizationId);
-          }
-          navigate(singleTarget.path);
-          return;
-        }
-
-        clearActiveContext();
-        navigate("/select-context");
+        handleLoginSuccess(data);
       }
     } catch (err) {
       setError(err.message ?? "Ошибка сети");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleFaceIdLoginClick = () => {
+    setError("");
+    const phoneDigits = getPhoneDigits(phone);
+    if (!phoneDigits) {
+      setError("Сначала введите номер телефона для Face ID.");
+      return;
+    }
+    setPendingPhoneDigits(phoneDigits);
+    setFaceCaptureOpen(true);
+  };
+
+  const handleFaceCaptureLogin = async ({ descriptor, liveness }) => {
+    setFaceIdLoading(true);
+    setError("");
+    try {
+      const data = await loginWithFaceId(pendingPhoneDigits, { descriptor, liveness });
+      setFaceCaptureOpen(false);
+      handleLoginSuccess(data);
+    } catch (err) {
+      setError(err.message ?? "Не удалось войти по Face ID.");
+      throw err;
+    } finally {
+      setFaceIdLoading(false);
     }
   };
 
@@ -108,10 +155,7 @@ const LoginPage = () => {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label
-                htmlFor="phone"
-                className="block text-sm font-medium text-muted mb-1.5"
-              >
+              <label htmlFor="phone" className="block text-sm font-medium text-muted mb-1.5">
                 Номер телефона
               </label>
               <input
@@ -124,15 +168,12 @@ const LoginPage = () => {
                 autoComplete="tel"
                 className="w-full px-4 py-2.5 rounded-lg border border-border bg-white text-muted placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition"
                 aria-label="Номер телефона"
-                disabled={isLoading}
+                disabled={isLoading || faceIdLoading}
               />
             </div>
 
             <div>
-              <label
-                htmlFor="password"
-                className="block text-sm font-medium text-muted mb-1.5"
-              >
+              <label htmlFor="password" className="block text-sm font-medium text-muted mb-1.5">
                 Пароль
               </label>
               <div className="relative">
@@ -145,7 +186,7 @@ const LoginPage = () => {
                   autoComplete="current-password"
                   className="w-full px-4 py-2.5 pr-11 rounded-lg border border-border bg-white text-muted placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition"
                   aria-label="Пароль"
-                  disabled={isLoading}
+                  disabled={isLoading || faceIdLoading}
                 />
                 <button
                   type="button"
@@ -154,31 +195,50 @@ const LoginPage = () => {
                   aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
                   tabIndex={0}
                 >
-                  {showPassword ? (
-                    <EyeOffIcon className="w-5 h-5" />
-                  ) : (
-                    <EyeIcon className="w-5 h-5" />
-                  )}
+                  {showPassword ? <EyeOffIcon className="w-5 h-5" /> : <EyeIcon className="w-5 h-5" />}
                 </button>
               </div>
             </div>
 
             {error && (
-              <p
-                role="alert"
-                className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2"
-              >
+              <p role="alert" className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
                 {error}
               </p>
             )}
 
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || faceIdLoading}
               className="w-full py-2.5 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition"
             >
               {isLoading ? "Вход…" : "Войти"}
             </button>
+
+            {faceIdSupported ? (
+              <>
+                <div className="relative py-1">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-border" />
+                  </div>
+                  <div className="relative flex justify-center text-xs">
+                    <span className="bg-white px-2 text-muted">или</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleFaceIdLoginClick}
+                  disabled={isLoading || faceIdLoading}
+                  aria-label="Войти с Face ID"
+                  tabIndex={0}
+                  className="w-full py-2.5 rounded-lg border border-border bg-white text-primary font-medium hover:bg-secondary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition"
+                >
+                  {faceIdLoading ? "Face ID…" : "Войти с Face ID"}
+                </button>
+                <p className="text-xs text-muted text-center">
+                  Подойдите близко и держите лицо в круге. Пароль остаётся основным способом входа.
+                </p>
+              </>
+            ) : null}
           </form>
         </div>
 
@@ -187,9 +247,7 @@ const LoginPage = () => {
           {COMPANY.description && (
             <p className="text-white/70 text-xs mt-0.5">{COMPANY.description}</p>
           )}
-          {COMPANY.contact && (
-            <p className="text-white/70 text-xs mt-1">{COMPANY.contact}</p>
-          )}
+          {COMPANY.contact && <p className="text-white/70 text-xs mt-1">{COMPANY.contact}</p>}
           {COMPANY.feedbackUrl && (
             <a
               href={COMPANY.feedbackUrl}
@@ -202,6 +260,15 @@ const LoginPage = () => {
           )}
         </footer>
       </div>
+
+      <FaceCaptureModal
+        open={faceCaptureOpen}
+        busy={faceIdLoading}
+        title="Вход по Face ID"
+        hint="Подойдите близко, поместите лицо в круг и не двигайтесь."
+        onClose={() => setFaceCaptureOpen(false)}
+        onCapture={handleFaceCaptureLogin}
+      />
     </div>
   );
 };

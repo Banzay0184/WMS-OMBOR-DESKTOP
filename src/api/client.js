@@ -87,6 +87,10 @@ const refreshAccessToken = () => {
  */
 const isProtectedPath = (path) => {
   const normalized = typeof path === "string" ? path.replace(/^\//, "") : "";
+  if (normalized.startsWith("webauthn/login/")) return false;
+  if (normalized.startsWith("face/login/")) return false;
+  if (normalized.startsWith("webauthn/")) return true;
+  if (normalized.startsWith("face/")) return true;
   return normalized.startsWith("platform/") || normalized.startsWith("me/");
 };
 

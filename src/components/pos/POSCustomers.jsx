@@ -127,6 +127,11 @@ const DebtModal = ({ customer, organizationId, onClose, onPaid }) => {
 
   if (!customer) return null;
 
+  const openDebtSales = Array.isArray(detail?.debt_sales)
+    ? detail.debt_sales.filter((s) => Number(s.remaining_debt) > 0)
+    : [];
+  const currentDebt = Number(detail?.total_debt ?? customer.total_debt ?? 0);
+
   const handlePay = async () => {
     setActionError("");
     if (!paymentSale) {
@@ -172,8 +177,16 @@ const DebtModal = ({ customer, organizationId, onClose, onPaid }) => {
             </p>
             <p className="text-sm text-amber-700 mt-1">
               Текущий долг:{" "}
-              <span className="font-bold">{formatMoney(detail?.total_debt ?? customer.total_debt)} UZS</span>
+              <span className="font-bold">{formatMoney(currentDebt)} UZS</span>
             </p>
+            {Number(detail?.prepayment_balance ?? customer.prepayment_balance) > 0 ? (
+              <p className="text-sm text-emerald-700 mt-1">
+                Предоплата:{" "}
+                <span className="font-bold">
+                  {formatMoney(detail?.prepayment_balance ?? customer.prepayment_balance)} UZS
+                </span>
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -190,7 +203,7 @@ const DebtModal = ({ customer, organizationId, onClose, onPaid }) => {
           <div className="text-sm text-muted text-center py-6">Загрузка…</div>
         ) : error ? (
           <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 p-3 text-sm">{error}</div>
-        ) : detail?.debt_sales?.length ? (
+        ) : openDebtSales.length ? (
           <div className="rounded-xl border border-border overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-secondary text-muted">
@@ -204,7 +217,7 @@ const DebtModal = ({ customer, organizationId, onClose, onPaid }) => {
                 </tr>
               </thead>
               <tbody>
-                {detail.debt_sales.map((s) => (
+                {openDebtSales.map((s) => (
                   <tr key={s.id} className="border-t border-border">
                     <td className="px-3 py-2 font-medium text-primary">{s.sale_number}</td>
                     <td className="px-3 py-2 text-muted">{formatDateTime(s.created_at)}</td>
@@ -216,7 +229,10 @@ const DebtModal = ({ customer, organizationId, onClose, onPaid }) => {
                     <td className="px-3 py-2 text-right">
                       <button
                         type="button"
-                        onClick={() => setPaymentSale(s.id)}
+                        onClick={() => {
+                          setPaymentSale(s.id);
+                          setAmount(String(Number(s.remaining_debt) || ""));
+                        }}
                         aria-label={`Внести платёж по чеку ${s.sale_number}`}
                         tabIndex={0}
                         className={
@@ -378,6 +394,7 @@ const POSCustomers = () => {
                   <th className="text-left px-3 py-2">Телефон</th>
                   <th className="text-left px-3 py-2">Telegram</th>
                   <th className="text-right px-3 py-2">Долг</th>
+                  <th className="text-right px-3 py-2">Предоплата</th>
                   <th className="text-right px-3 py-2"></th>
                 </tr>
               </thead>
@@ -390,16 +407,23 @@ const POSCustomers = () => {
                     <td className="px-3 py-2 text-right font-semibold text-amber-700">
                       {Number(c.total_debt) > 0 ? formatMoney(c.total_debt) : "—"}
                     </td>
+                    <td className="px-3 py-2 text-right font-semibold text-emerald-700">
+                      {Number(c.prepayment_balance) > 0 ? formatMoney(c.prepayment_balance) : "—"}
+                    </td>
                     <td className="px-3 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => setActiveDebt(c)}
-                        aria-label={`Открыть долги клиента ${c.name}`}
-                        tabIndex={0}
-                        className="text-xs text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/30 rounded"
-                      >
-                        Долги / платежи
-                      </button>
+                      {Number(c.total_debt) > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setActiveDebt(c)}
+                          aria-label={`Открыть долги клиента ${c.name}`}
+                          tabIndex={0}
+                          className="text-xs text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/30 rounded"
+                        >
+                          Долги / платежи
+                        </button>
+                      ) : (
+                        <span className="text-xs text-muted">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}

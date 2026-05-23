@@ -117,8 +117,8 @@ const LiveShiftPanel = ({ shift, onClose, closing, setClosingCash, onSubmitClose
 
       <ReportBlock title="Закрыть смену (Z-отчёт)">
         <p className="text-sm text-muted mb-3">
-          Пересчитайте наличные в кассе и укажите фактическую сумму. После закрытия смену сегодня
-          открыть повторно будет нельзя.
+          Пересчитайте наличные в кассе и укажите фактическую сумму. После закрытия Z-отчёта
+          повторно открыть смену сегодня сможет только администратор платформы.
         </p>
         <label htmlFor="closing-cash" className="block text-sm font-medium text-muted mb-1.5">
           Наличные в кассе (UZS)
@@ -152,6 +152,42 @@ const LiveShiftPanel = ({ shift, onClose, closing, setClosingCash, onSubmitClose
   );
 };
 
+const OpenShiftPanel = ({ openingCash, setOpeningCash, onSubmit, loading, error }) => (
+  <ReportBlock title="Открыть смену">
+    <p className="text-sm text-muted mb-3">
+      Укажите сумму наличных в кассе на начало смены и нажмите «Открыть смену».
+    </p>
+    <label htmlFor="open-opening-cash" className="block text-sm font-medium text-muted mb-1.5">
+      Наличные в кассе (UZS)
+    </label>
+    <input
+      id="open-opening-cash"
+      type="number"
+      min="0"
+      step="100"
+      value={openingCash}
+      onChange={(e) => setOpeningCash(e.target.value)}
+      className={INPUT_CLASS}
+      aria-label="Наличные в кассе на начало смены"
+    />
+    {error ? (
+      <p className="text-sm text-red-600 mt-2" role="alert">
+        {error}
+      </p>
+    ) : null}
+    <button
+      type="button"
+      onClick={onSubmit}
+      disabled={loading}
+      tabIndex={0}
+      aria-label="Открыть смену"
+      className="mt-4 w-full px-4 py-3 rounded-lg bg-primary text-white font-medium hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
+    >
+      {loading ? "Открытие…" : "Открыть смену"}
+    </button>
+  </ReportBlock>
+);
+
 const POSZReport = () => {
   const { organizationId, warehouseId, reloadShift, canOpenToday, isShiftOpen } = useOutletContext();
 
@@ -163,8 +199,10 @@ const POSZReport = () => {
   const [closedShift, setClosedShift] = useState(null);
   const [history, setHistory] = useState([]);
   const [closingCash, setClosingCash] = useState("");
+  const [openingCash, setOpeningCash] = useState("0");
   const [actionLoading, setActionLoading] = useState(false);
   const [closeError, setCloseError] = useState("");
+  const [openError, setOpenError] = useState("");
 
   const loadData = useCallback(async () => {
     if (!organizationId || !warehouseId) return;
@@ -193,11 +231,31 @@ const POSZReport = () => {
     void loadData();
   }, [loadData]);
 
+  const handleOpenShift = async () => {
+    if (!organizationId || !warehouseId) return;
+    setActionLoading(true);
+    setOpenError("");
+    try {
+      const data = await posApi.openShift(organizationId, {
+        warehouseId,
+        openingCash: Number(openingCash) || 0,
+      });
+      setShift(data);
+      setCanOpen(true);
+      await loadData();
+      await reloadShift?.();
+    } catch (err) {
+      setOpenError(err.message || "Не удалось открыть смену");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleCloseShift = async () => {
     if (!organizationId || !shift?.id) return;
 
     const confirmed = window.confirm(
-      "Вы закрываете смену на сегодня.\n\nПосле закрытия Z-отчёта новую смену сегодня открыть будет нельзя — продажи станут недоступны до завтра.\n\nЗакрыть смену?"
+      "Вы закрываете смену на сегодня.\n\nПосле закрытия Z-отчёта повторно открыть смену сегодня сможет только администратор платформы.\n\nЗакрыть смену?"
     );
     if (!confirmed) return;
 
@@ -279,17 +337,21 @@ const POSZReport = () => {
           <ReportBlock title="Смена не открыта">
             {!canOpen && !isShiftOpen ? (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                На этом складе смена на сегодня уже закрыта. Новую смену можно открыть только завтра
-                или на другом складе.
+                На этом складе смена на сегодня уже закрыта. Повторно открыть смену могут только
+                администраторы платформы. Обычные пользователи смогут работать завтра или на другом
+                складе.
                 {closedToday?.shift_number ? (
                   <p className="mt-2 text-xs text-amber-800/80">{closedToday.shift_number}</p>
                 ) : null}
               </div>
             ) : (
-              <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
-                Смену открывает администратор платформы в панели разработчика. Кассир не может открыть
-                смену самостоятельно — дождитесь открытия или обратитесь к администратору.
-              </div>
+              <OpenShiftPanel
+                openingCash={openingCash}
+                setOpeningCash={setOpeningCash}
+                onSubmit={handleOpenShift}
+                loading={actionLoading}
+                error={openError}
+              />
             )}
           </ReportBlock>
         )}

@@ -3,7 +3,8 @@
  * Chrome/Edge, HTTPS или localhost.
  */
 
-import { PAYMENT_LABEL, formatDate, formatMoney } from "./posApi";
+import { PAYMENT_LABEL, formatDate, formatMoney, formatSalePaymentLabel } from "./posApi";
+import { buildCustomerBalanceRows, getCardReceivedFromCustomer, getCashReceivedFromCustomer } from "./receiptBalance";
 import { getReceiptPrintSettings, getResolvedReceiptLayout } from "./receiptPrintSettings";
 
 const ESC = 0x1b;
@@ -278,7 +279,7 @@ export const buildEscPosSaleReceipt = ({
   }
 
   pushTxt(`${"=".repeat(width)}\n`);
-  const paymentLabel = PAYMENT_LABEL[sale.payment_type] || sale.payment_type;
+  const paymentLabel = formatSalePaymentLabel(sale);
   pushTxt(padLine("Оплата", paymentLabel, width) + "\n");
 
   if (sale.customer_name) {
@@ -291,11 +292,61 @@ export const buildEscPosSaleReceipt = ({
   if (Number(sale.remaining_debt) > 0 && sale.payment_type !== "cash") {
     pushTxt(padLine("Долг", formatMoney(sale.remaining_debt), width) + "\n");
   }
+  if (Number(sale.prepayment_applied) > 0) {
+    pushTxt(padLine("С баланса", formatMoney(sale.prepayment_applied), width) + "\n");
+  }
+  const cashReceived = getCashReceivedFromCustomer(sale);
+  const cardReceived = getCardReceivedFromCustomer(sale);
+  const cashForGoods = Number(sale.cash_amount || 0);
+  if (
+    sale.payment_type === "cash" &&
+    Number(sale.prepayment_applied) > 0 &&
+    cashForGoods > 0
+  ) {
+    pushTxt(padLine("Нал. (покупка)", formatMoney(cashForGoods), width) + "\n");
+  }
+  if (cashReceived > 0 && (sale.payment_type === "cash" || sale.payment_type === "mixed")) {
+    pushCmd(CMD.BOLD_ON);
+    pushTxt(padLine("Наличными", formatMoney(cashReceived), width) + "\n");
+    pushCmd(CMD.BOLD_OFF);
+  }
+  if (cardReceived > 0 && (sale.payment_type === "card" || sale.payment_type === "mixed")) {
+    pushCmd(CMD.BOLD_ON);
+    pushTxt(padLine("Картой", formatMoney(cardReceived), width) + "\n");
+    pushCmd(CMD.BOLD_OFF);
+  }
+  if (Number(sale.debt_paid_from_payment) > 0) {
+    pushTxt(padLine("На долг", formatMoney(sale.debt_paid_from_payment), width) + "\n");
+  }
+  if (Number(sale.prepayment_deposited) > 0) {
+    pushTxt(padLine("На предоплату", formatMoney(sale.prepayment_deposited), width) + "\n");
+  }
+  if (
+    sale.payment_type === "cash" &&
+    Number(sale.cash_tendered) > Number(sale.cash_amount) &&
+    Number(sale.prepayment_deposited) === 0 &&
+    Number(sale.debt_paid_from_payment) === 0
+  ) {
+    pushTxt(
+      padLine("Сдача", formatMoney(Number(sale.cash_tendered) - Number(sale.cash_amount)), width) + "\n"
+    );
+  }
 
   pushTxt(`${"-".repeat(width)}\n`);
   pushCmd(CMD.BOLD_ON);
   pushTxt(padLine("ИТОГО", `${formatMoney(sale.total_amount)} UZS`, width) + "\n");
   pushCmd(CMD.BOLD_OFF);
+
+  const balanceRows = buildCustomerBalanceRows(sale);
+  if (balanceRows.length > 0) {
+    pushTxt("\n");
+    pushCmd(CMD.BOLD_ON);
+    pushTxt(padLine("Баланс клиента", "", width) + "\n");
+    pushCmd(CMD.BOLD_OFF);
+    for (const row of balanceRows) {
+      pushTxt(padLine(row.label, row.value, width) + "\n");
+    }
+  }
 
   if (footer) {
     pushCmd(CMD.CENTER);

@@ -776,8 +776,11 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
             </p>
           ) : showUnmarkedStock ? (
             <p className="text-sm text-muted/75 mt-1">
-              Остатки товаров на складе: приход минус расход по количеству
-              {!canUseMarking ? " (учёт по кодам маркировки в тарифе не включён)" : ""}.
+              Остатки: приход − расход − розница POS (касса). Розничные чеки — в разделе{" "}
+              <Link to={`/app/retail-sales?warehouse_id=${warehouseId}`} className="text-primary hover:underline">
+                «Розничные продажи»
+              </Link>
+              .
             </p>
           ) : null}
           {showMarkedStock && !(!rowsLoading && rows.length === 0 && totalCount === 0) ? (
@@ -1359,6 +1362,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                   {canUseInvoiceIkpu ? <th className="py-2.5 px-3">ИКПУ</th> : null}
                   {canUseUpc ? <th className="py-2.5 px-3">UPC</th> : null}
                   <th className="py-2.5 px-3">Ед. изм.</th>
+                  <th className="py-2.5 px-3 text-right">Розница</th>
                   <th className="py-2.5 px-3 text-right">Остаток</th>
                   <th className="py-2.5 px-3 text-right">Действия</th>
                 </tr>
@@ -1390,6 +1394,9 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
                         <td className="py-2 px-3 font-mono text-xs align-top">{row.upc || "—"}</td>
                       ) : null}
                       <td className="py-2 px-3 align-top">{row.unit || "шт"}</td>
+                      <td className="py-2 px-3 align-top text-right text-muted tabular-nums">
+                        {Number(row.pos_sold_quantity) > 0 ? row.pos_sold_quantity : "—"}
+                      </td>
                       <td className="py-2 px-3 align-top text-right font-semibold">{row.quantity ?? 0}</td>
                       <td className="py-2 px-3 align-top text-right">
                         {canUseWarehouseOutgoing && canCreateSales ? (

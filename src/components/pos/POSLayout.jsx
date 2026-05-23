@@ -252,7 +252,13 @@ const POSLayout = () => {
           ) : (
             <>
               <Outlet context={ctxValue} />
-              {showOpenGate ? <POSOpenShiftGate /> : null}
+              {showOpenGate ? (
+                <POSOpenShiftGate
+                  organizationId={organizationId}
+                  warehouseId={warehouseId}
+                  onShiftOpened={loadShift}
+                />
+              ) : null}
               {showClosedGate ? (
                 <POSShiftClosedGate closedShift={shiftState?.closed_today} />
               ) : null}
