@@ -401,7 +401,7 @@ const POSPrinterSettings = () => {
                 </option>
               ))}
             </select>
-            <p className="text-xs text-muted mt-1">Шрифт: Courier (моноширинный), 9–10 pt оптимально.</p>
+            <p className="text-xs text-muted mt-1">Шрифт: Courier. Для макета «Таблица» лучше 11 pt.</p>
           </div>
 
           <div>

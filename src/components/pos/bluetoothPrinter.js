@@ -24,6 +24,7 @@ const CMD = {
   BOLD_ON: () => u8([ESC, 0x45, 0x01]),
   BOLD_OFF: () => u8([ESC, 0x45, 0x00]),
   DOUBLE_ON: () => u8([ESC, 0x21, 0x10]),
+  DOUBLE_HEIGHT: () => u8([ESC, 0x21, 0x10]),
   NORMAL: () => u8([ESC, 0x21, 0x00]),
   CUT: () => u8([GS, 0x56, 0x00]),
   FEED: (n = 3) => u8([ESC, 0x64, n]),
@@ -344,6 +345,7 @@ export const buildEscPosSaleReceipt = ({
 
   const items = Array.isArray(sale.items) ? sale.items : [];
   if (receiptLayoutId === "table") {
+    pushCmd(CMD.DOUBLE_HEIGHT);
     pushCmd(CMD.BOLD_ON);
     pushTxt(buildEscPosTableHeader(width) + "\n");
     pushCmd(CMD.BOLD_OFF);
@@ -351,6 +353,7 @@ export const buildEscPosSaleReceipt = ({
     items.forEach((it, index) => {
       pushTxt(buildEscPosTableRow(index, it, width) + "\n");
     });
+    pushCmd(CMD.NORMAL);
   } else {
     pushTxt(padLine("ТОВАР", "СУММА", width) + "\n");
     pushTxt("-".repeat(width) + "\n");

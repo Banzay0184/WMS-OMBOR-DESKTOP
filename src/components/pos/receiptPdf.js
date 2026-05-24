@@ -243,41 +243,51 @@ export const THERMAL_RECEIPT_COMPONENT_CSS = `
     line-height: 1.35;
   }
   .receipt-table-wrap {
-    margin: 4px 0;
+    margin: 6px 0;
     overflow: hidden;
+  }
+  .receipt.receipt-layout-table .receipt-table-wrap {
+    margin-left: -2px;
+    margin-right: -2px;
+    width: calc(100% + 4px);
   }
   .receipt-table {
     width: 100%;
     border-collapse: collapse;
     table-layout: fixed;
-    font-size: calc(var(--receipt-meta-pt, 9pt) - 0.5pt);
+    font-size: var(--receipt-table-pt, var(--receipt-body-pt, 10pt));
   }
   .receipt-table th,
   .receipt-table td {
-    border: 1px solid #000;
-    padding: 2px 2px;
-    vertical-align: top;
+    border: 2px solid #000;
+    padding: 5px 4px;
+    vertical-align: middle;
     word-break: break-word;
-    line-height: 1.15;
+    line-height: 1.25;
   }
   .receipt-table th {
-    font-weight: 700;
+    font-weight: 800;
     text-align: center;
-    font-size: calc(var(--receipt-meta-pt, 9pt) - 1pt);
-    padding: 3px 2px;
+    font-size: var(--receipt-table-head-pt, calc(var(--receipt-body-pt, 10pt) + 1pt));
+    padding: 6px 4px;
+    letter-spacing: 0.02em;
   }
   .receipt-table .col-num {
-    width: 8%;
+    width: 7%;
     text-align: center;
     font-variant-numeric: tabular-nums;
+    font-weight: 700;
   }
   .receipt-table .col-name {
-    width: 38%;
+    width: 40%;
+    font-weight: 600;
+    font-size: var(--receipt-table-pt, var(--receipt-body-pt, 10pt));
   }
   .receipt-table .col-qty {
-    width: 12%;
+    width: 11%;
     text-align: center;
     font-variant-numeric: tabular-nums;
+    font-weight: 700;
   }
   .receipt-table .col-price,
   .receipt-table .col-sum {
@@ -285,6 +295,7 @@ export const THERMAL_RECEIPT_COMPONENT_CSS = `
     text-align: right;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+    font-weight: 700;
   }
   .receipt-table tbody tr:nth-child(even) td {
     background: #f7f7f7;
@@ -314,6 +325,8 @@ export const buildThermalPrintStyles = (layout) => {
   const bodyPt = layout.fontSizePt;
   const metaPt = Math.max(8, bodyPt - 1);
   const titlePt = Math.min(13, bodyPt + 2);
+  const tablePt = Math.min(12, bodyPt + 1);
+  const tableHeadPt = Math.min(13, bodyPt + 2);
 
   return `
   @page {
@@ -332,15 +345,32 @@ export const buildThermalPrintStyles = (layout) => {
     font-size: ${bodyPt}pt;
     line-height: 1.3;
     color: #000;
-    padding: 2.5mm 1.5mm 4mm;
+    padding: 2mm 1mm 4mm;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
     --receipt-body-pt: ${bodyPt}pt;
     --receipt-meta-pt: ${metaPt}pt;
     --receipt-title-pt: ${titlePt}pt;
+    --receipt-table-pt: ${tablePt}pt;
+    --receipt-table-head-pt: ${tableHeadPt}pt;
   }
   ${THERMAL_RECEIPT_COMPONENT_CSS}
 `;
+};
+
+const receiptStyleVars = (fontSizePt) => {
+  const bodyPt = fontSizePt;
+  const metaPt = Math.max(8, bodyPt - 1);
+  const titlePt = Math.min(13, bodyPt + 2);
+  const tablePt = Math.min(12, bodyPt + 1);
+  const tableHeadPt = Math.min(13, bodyPt + 2);
+  return {
+    ["--receipt-body-pt"]: `${bodyPt}pt`,
+    ["--receipt-meta-pt"]: `${metaPt}pt`,
+    ["--receipt-title-pt"]: `${titlePt}pt`,
+    ["--receipt-table-pt"]: `${tablePt}pt`,
+    ["--receipt-table-head-pt"]: `${tableHeadPt}pt`,
+  };
 };
 
 export const getThermalReceiptPreviewStyle = (layout) => ({
@@ -348,9 +378,7 @@ export const getThermalReceiptPreviewStyle = (layout) => ({
   maxWidth: "100%",
   fontFamily: layout.fontFamily,
   fontSize: `${layout.fontSizePt}pt`,
-  ["--receipt-body-pt"]: `${layout.fontSizePt}pt`,
-  ["--receipt-meta-pt"]: `${Math.max(8, layout.fontSizePt - 1)}pt`,
-  ["--receipt-title-pt"]: `${Math.min(13, layout.fontSizePt + 2)}pt`,
+  ...receiptStyleVars(layout.fontSizePt),
 });
 
 const buildListItemsHtml = (items, layout) => {
@@ -548,7 +576,7 @@ export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => 
   const developerBlock = receiptLayoutId === "table" ? buildDeveloperRequisitesHtml() : "";
 
   return `
-    <article class="receipt">
+    <article class="receipt${receiptLayoutId === "table" ? " receipt-layout-table" : ""}">
       <div class="receipt-ornament" aria-hidden="true">${ornament}</div>
       <header class="receipt-header">
         <h1 class="store">${escapeHtml(storeName || "Магазин")}</h1>
@@ -657,6 +685,7 @@ export const printThermalReceipt = ({ sale, storeName, organizationId }) => {
 };
 
 const renderHtmlToCanvas = async (html, layout) => {
+  const vars = receiptStyleVars(layout.fontSizePt);
   const host = document.createElement("div");
   host.style.cssText = [
     "position:fixed",
@@ -664,14 +693,12 @@ const renderHtmlToCanvas = async (html, layout) => {
     "top:0",
     `width:${layout.previewWidthPx}px`,
     "background:#fff",
-    "padding:10px 8px",
+    "padding:10px 6px",
     `font-family:${layout.fontFamily}`,
     `font-size:${layout.fontSizePt}pt`,
     "line-height:1.3",
     "color:#000",
-    `--receipt-body-pt:${layout.fontSizePt}pt`,
-    `--receipt-meta-pt:${Math.max(8, layout.fontSizePt - 1)}pt`,
-    `--receipt-title-pt:${Math.min(13, layout.fontSizePt + 2)}pt`,
+    ...Object.entries(vars).map(([key, value]) => `${key}:${value}`),
   ].join(";");
   host.innerHTML = `<style>${THERMAL_RECEIPT_COMPONENT_CSS}</style>${html}`;
   document.body.appendChild(host);

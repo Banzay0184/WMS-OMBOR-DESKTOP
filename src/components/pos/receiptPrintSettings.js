@@ -39,7 +39,8 @@ export const RECEIPT_FONT_OPTIONS = [
 
 export const RECEIPT_FONT_SIZE_OPTIONS = [
   { value: 9, label: "9 pt" },
-  { value: 10, label: "10 pt (рекомендуется)" },
+  { value: 10, label: "10 pt" },
+  { value: 11, label: "11 pt (рекомендуется для таблицы)" },
 ];
 
 export const RECEIPT_DPI_OPTIONS = [
@@ -83,7 +84,7 @@ export const PRINT_MODE_OPTIONS = [
 export const DEFAULT_RECEIPT_PRINT_SETTINGS = {
   paperSizeId: "50",
   fontId: "courier",
-  fontSizePt: 10,
+  fontSizePt: 11,
   dpiMode: "203",
   autoPrintOnSale: true,
   printMode: "browser",
