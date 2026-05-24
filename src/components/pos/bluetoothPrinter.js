@@ -7,6 +7,7 @@ import { DEVELOPER_REQUISITES } from "../../config";
 import { PAYMENT_LABEL, formatDate, formatMoney, formatSalePaymentLabel } from "./posApi";
 import { buildCustomerBalanceRows, getCardReceivedFromCustomer, getCashReceivedFromCustomer } from "./receiptBalance";
 import { getReceiptPrintSettings } from "./receiptPrintSettings";
+import { compactMoneyForColumn } from "./receiptTableMoney";
 
 const ESC = 0x1b;
 const GS = 0x1d;
@@ -162,29 +163,33 @@ const buildEscPosTableRow = (index, item, width) => {
   const qty = Number(item.quantity) || 0;
   const unit = Number(item.unit_price) || 0;
   const name = truncate(item.name_snapshot, width >= 44 ? 16 : width >= 36 ? 14 : width - 8);
-  const sum = formatMoney(item.subtotal);
 
   if (width >= 44) {
     const cols = [2, 16, 4, 9, 10];
+    const priceText = unit > 0 ? compactMoneyForColumn(unit, cols[3]) : "-";
+    const sumText = compactMoneyForColumn(item.subtotal, cols[4]);
     return (
       padCell(String(index + 1), cols[0], "center") +
       padCell(name, cols[1]) +
       padCell(String(qty), cols[2], "center") +
-      padCell(unit > 0 ? formatMoney(unit) : "-", cols[3], "right") +
-      padCell(sum, cols[4], "right")
+      padCell(priceText, cols[3], "right") +
+      padCell(sumText, cols[4], "right")
     );
   }
   if (width >= 36) {
     const cols = [2, 14, 3, 8, 8];
+    const priceText = unit > 0 ? compactMoneyForColumn(unit, cols[3]) : "-";
+    const sumText = compactMoneyForColumn(item.subtotal, cols[4]);
     return (
       padCell(String(index + 1), cols[0], "center") +
       padCell(name, cols[1]) +
       padCell(String(qty), cols[2], "center") +
-      padCell(unit > 0 ? formatMoney(unit) : "-", cols[3], "right") +
-      padCell(sum, cols[4], "right")
+      padCell(priceText, cols[3], "right") +
+      padCell(sumText, cols[4], "right")
     );
   }
-  return padLine(`${index + 1}. ${name}`, `${qty} x ${sum}`, width);
+  const sumText = compactMoneyForColumn(item.subtotal, Math.max(8, width - name.length - 6));
+  return padLine(`${index + 1}. ${name}`, `${qty} x ${sumText}`, width);
 };
 
 const buildEscPosDeveloperBlock = (width) => {

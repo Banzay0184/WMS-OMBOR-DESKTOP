@@ -7,6 +7,11 @@ import {
   printSaleReceiptBluetooth,
 } from "./bluetoothPrinter";
 import { getReceiptPrintSettings, getResolvedReceiptLayout } from "./receiptPrintSettings";
+import {
+  compactMoneyForColumn,
+  formatReceiptTableMoneyText,
+  getReceiptMoneySizeClass,
+} from "./receiptTableMoney";
 import { buildCustomerBalanceRows, getCardReceivedFromCustomer, getCashReceivedFromCustomer } from "./receiptBalance";
 
 /** @deprecated используйте getResolvedReceiptLayout */
@@ -244,7 +249,7 @@ export const THERMAL_RECEIPT_COMPONENT_CSS = `
   }
   .receipt-table-wrap {
     margin: 6px 0;
-    overflow: hidden;
+    overflow: visible;
   }
   .receipt.receipt-layout-table .receipt-table-wrap {
     margin-left: -2px;
@@ -293,9 +298,39 @@ export const THERMAL_RECEIPT_COMPONENT_CSS = `
   .receipt-table .col-sum {
     width: 21%;
     text-align: right;
+    padding-left: 2px;
+    padding-right: 2px;
+    overflow: visible;
+  }
+  .receipt-table .money-cell {
+    text-align: right;
+    vertical-align: middle;
+  }
+  .receipt-table .money-value {
+    display: inline-block;
+    max-width: 100%;
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
     font-weight: 700;
+    line-height: 1.1;
+    white-space: nowrap;
+    transform-origin: right center;
+  }
+  .receipt-table .money-value.money-normal {
+    font-size: 1em;
+  }
+  .receipt-table .money-value.money-compact {
+    font-size: 0.88em;
+  }
+  .receipt-table .money-value.money-tight {
+    font-size: 0.76em;
+  }
+  .receipt-table .money-value.money-micro {
+    font-size: 0.64em;
+    letter-spacing: -0.02em;
+  }
+  .receipt-table .money-value.money-nano {
+    font-size: 0.54em;
+    letter-spacing: -0.03em;
   }
   .receipt-table tbody tr:nth-child(even) td {
     background: #f7f7f7;
@@ -408,7 +443,14 @@ const buildListItemsHtml = (items, layout) => {
   `;
 };
 
-const buildTableItemsHtml = (items, layout) => {
+const buildReceiptTableMoneyCell = (value, paperSizeId) => {
+  const text = formatReceiptTableMoneyText(value);
+  if (!text) return "—";
+  const sizeClass = getReceiptMoneySizeClass(text, paperSizeId);
+  return `<span class="money-value ${sizeClass}">${escapeHtml(text)}</span>`;
+};
+
+const buildTableItemsHtml = (items, layout, paperSizeId) => {
   const rows = items
     .map((it, index) => {
       const qty = Number(it.quantity) || 0;
@@ -418,8 +460,8 @@ const buildTableItemsHtml = (items, layout) => {
           <td class="col-num">${index + 1}</td>
           <td class="col-name">${escapeHtml(truncateName(it.name_snapshot, layout.nameMaxLen))}</td>
           <td class="col-qty">${qty}</td>
-          <td class="col-price">${unit > 0 ? formatMoney(unit) : "—"}</td>
-          <td class="col-sum">${formatMoney(it.subtotal)}</td>
+          <td class="col-price money-cell">${buildReceiptTableMoneyCell(unit, paperSizeId)}</td>
+          <td class="col-sum money-cell">${buildReceiptTableMoneyCell(it.subtotal, paperSizeId)}</td>
         </tr>
       `;
     })
@@ -560,7 +602,7 @@ export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => 
   const items = Array.isArray(sale.items) ? sale.items : [];
   const itemsSection =
     receiptLayoutId === "table"
-      ? buildTableItemsHtml(items, layout)
+      ? buildTableItemsHtml(items, layout, settings.paperSizeId || "50")
       : buildListItemsHtml(items, layout);
 
   const balanceBlock = buildBalanceBlockHtml(sale);
@@ -770,7 +812,7 @@ export const buildSampleSaleForPreview = () => ({
   cash_amount: "50000",
   card_amount: "75000",
   remaining_debt: "0",
-  total_amount: "125000",
+  total_amount: "1044000",
   customer_name: "Клиент пример",
   items: [
     {
@@ -789,10 +831,10 @@ export const buildSampleSaleForPreview = () => ({
     },
     {
       id: 3,
-      name_snapshot: "Сок апельсин 1л",
-      quantity: 3,
-      unit_price: "27000",
-      subtotal: "81000",
+      name_snapshot: "Телевизор 55",
+      quantity: 1,
+      unit_price: "1000000",
+      subtotal: "1000000",
     },
   ],
 });
