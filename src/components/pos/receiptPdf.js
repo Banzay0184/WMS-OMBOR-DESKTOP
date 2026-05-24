@@ -1,5 +1,6 @@
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
+import { DEVELOPER_REQUISITES } from "../../config";
 import { PAYMENT_LABEL, formatDate, formatMoney, formatSalePaymentLabel } from "./posApi";
 import {
   isBluetoothConnected,
@@ -241,6 +242,71 @@ export const THERMAL_RECEIPT_COMPONENT_CSS = `
     white-space: pre-wrap;
     line-height: 1.35;
   }
+  .receipt-table-wrap {
+    margin: 4px 0;
+    overflow: hidden;
+  }
+  .receipt-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: calc(var(--receipt-meta-pt, 9pt) - 0.5pt);
+  }
+  .receipt-table th,
+  .receipt-table td {
+    border: 1px solid #000;
+    padding: 2px 2px;
+    vertical-align: top;
+    word-break: break-word;
+    line-height: 1.15;
+  }
+  .receipt-table th {
+    font-weight: 700;
+    text-align: center;
+    font-size: calc(var(--receipt-meta-pt, 9pt) - 1pt);
+    padding: 3px 2px;
+  }
+  .receipt-table .col-num {
+    width: 8%;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .receipt-table .col-name {
+    width: 38%;
+  }
+  .receipt-table .col-qty {
+    width: 12%;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .receipt-table .col-price,
+  .receipt-table .col-sum {
+    width: 21%;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .receipt-table tbody tr:nth-child(even) td {
+    background: #f7f7f7;
+  }
+  .receipt-dev {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px dashed #888;
+    text-align: center;
+    font-size: calc(var(--receipt-meta-pt, 9pt) - 1pt);
+    color: #444;
+    line-height: 1.35;
+  }
+  .receipt-dev-title {
+    font-weight: 700;
+    color: #222;
+    margin: 0 0 3px;
+    font-size: calc(var(--receipt-meta-pt, 9pt) - 0.5pt);
+  }
+  .receipt-dev p {
+    margin: 1px 0;
+  }
 `;
 
 export const buildThermalPrintStyles = (layout) => {
@@ -287,19 +353,7 @@ export const getThermalReceiptPreviewStyle = (layout) => ({
   ["--receipt-title-pt"]: `${Math.min(13, layout.fontSizePt + 2)}pt`,
 });
 
-/**
- * HTML чека для термопринтера (ширина и шрифт из настроек).
- */
-export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => {
-  if (!sale) return "";
-
-  const layout = getResolvedReceiptLayout(organizationId);
-  const settings = getReceiptPrintSettings(organizationId);
-  const paymentLabel = formatSalePaymentLabel(sale);
-
-  const ornament = "· ".repeat(Math.max(8, Math.floor(layout.nameMaxLen / 2)));
-
-  const items = Array.isArray(sale.items) ? sale.items : [];
+const buildListItemsHtml = (items, layout) => {
   const itemsHtml = items
     .map((it) => {
       const qtyLine = buildItemQtyLine(it);
@@ -315,6 +369,66 @@ export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => 
     })
     .join("");
 
+  return `
+    <section class="items-section" aria-label="Товары">
+      <div class="items-head">
+        <span>Товар</span>
+        <span>Сумма</span>
+      </div>
+      ${itemsHtml}
+    </section>
+  `;
+};
+
+const buildTableItemsHtml = (items, layout) => {
+  const rows = items
+    .map((it, index) => {
+      const qty = Number(it.quantity) || 0;
+      const unit = Number(it.unit_price) || 0;
+      return `
+        <tr>
+          <td class="col-num">${index + 1}</td>
+          <td class="col-name">${escapeHtml(truncateName(it.name_snapshot, layout.nameMaxLen))}</td>
+          <td class="col-qty">${qty}</td>
+          <td class="col-price">${unit > 0 ? formatMoney(unit) : "—"}</td>
+          <td class="col-sum">${formatMoney(it.subtotal)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  return `
+    <section class="items-section receipt-table-wrap" aria-label="Товары">
+      <table class="receipt-table">
+        <thead>
+          <tr>
+            <th class="col-num">№</th>
+            <th class="col-name">Товар</th>
+            <th class="col-qty">Кол</th>
+            <th class="col-price">Цена</th>
+            <th class="col-sum">Сумма</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </section>
+  `;
+};
+
+const buildDeveloperRequisitesHtml = () => {
+  const { title, company, phone, site } = DEVELOPER_REQUISITES;
+  return `
+    <section class="receipt-dev" aria-label="Реквизиты разработчика">
+      <p class="receipt-dev-title">${escapeHtml(title)}</p>
+      <p>${escapeHtml(company)}</p>
+      ${phone ? `<p>Тел: ${escapeHtml(phone)}</p>` : ""}
+      ${site ? `<p>${escapeHtml(site)}</p>` : ""}
+    </section>
+  `;
+};
+
+const buildSummaryRowsHtml = (sale, layout) => {
+  const paymentLabel = formatSalePaymentLabel(sale);
   const summaryRows = [];
   summaryRows.push(
     `<div class="row"><span class="label">Оплата</span><span class="value">${escapeHtml(paymentLabel)}</span></div>`
@@ -386,10 +500,13 @@ export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => 
       `<div class="row"><span class="label">Сдача</span><span class="value">${formatMoney(Number(sale.cash_tendered) - Number(sale.cash_amount))}</span></div>`
     );
   }
+  return summaryRows.join("");
+};
 
+const buildBalanceBlockHtml = (sale) => {
   const balanceRows = buildCustomerBalanceRows(sale);
-  const balanceBlock = balanceRows.length
-    ? `<section class="receipt-balance" aria-label="Баланс клиента">
+  if (!balanceRows.length) return "";
+  return `<section class="receipt-balance" aria-label="Баланс клиента">
         <div class="receipt-balance-title">Баланс клиента</div>
         ${balanceRows
           .map(
@@ -397,8 +514,28 @@ export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => 
               `<div class="row${row.tone ? ` ${row.tone}` : ""}"><span class="label">${escapeHtml(row.label)}</span><span class="value">${escapeHtml(row.value)}</span></div>`
           )
           .join("")}
-      </section>`
-    : "";
+      </section>`;
+};
+
+/**
+ * HTML чека для термопринтера (ширина и шрифт из настроек).
+ */
+export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => {
+  if (!sale) return "";
+
+  const layout = getResolvedReceiptLayout(organizationId);
+  const settings = getReceiptPrintSettings(organizationId);
+  const receiptLayoutId = settings.receiptLayoutId === "list" ? "list" : "table";
+
+  const ornament = "· ".repeat(Math.max(8, Math.floor(layout.nameMaxLen / 2)));
+
+  const items = Array.isArray(sale.items) ? sale.items : [];
+  const itemsSection =
+    receiptLayoutId === "table"
+      ? buildTableItemsHtml(items, layout)
+      : buildListItemsHtml(items, layout);
+
+  const balanceBlock = buildBalanceBlockHtml(sale);
 
   const innBlock = settings.shopInn
     ? `<p class="receipt-inn">ИНН ${escapeHtml(settings.shopInn)}</p>`
@@ -407,6 +544,8 @@ export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => 
   const footerBlock = settings.receiptFooter
     ? `<footer class="receipt-footer">${escapeHtml(settings.receiptFooter)}</footer>`
     : "";
+
+  const developerBlock = receiptLayoutId === "table" ? buildDeveloperRequisitesHtml() : "";
 
   return `
     <article class="receipt">
@@ -431,16 +570,10 @@ export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => 
         </div>
       </div>
       <hr class="sep sep-heavy" />
-      <section class="items-section" aria-label="Товары">
-        <div class="items-head">
-          <span>Товар</span>
-          <span>Сумма</span>
-        </div>
-        ${itemsHtml}
-      </section>
+      ${itemsSection}
       <hr class="sep sep-heavy" />
       <section class="receipt-summary" aria-label="Оплата">
-        ${summaryRows.join("")}
+        ${buildSummaryRowsHtml(sale, layout)}
       </section>
       <div class="receipt-total" aria-label="Итого">
         <span class="total-label">ИТОГО</span>
@@ -448,6 +581,7 @@ export const buildThermalReceiptHtml = ({ sale, storeName, organizationId }) => 
       </div>
       ${balanceBlock}
       ${footerBlock ? `<hr class="sep sep-light" />${footerBlock}` : ""}
+      ${developerBlock}
       <div class="receipt-ornament" aria-hidden="true">${ornament}</div>
     </article>
   `;

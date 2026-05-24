@@ -34,3 +34,11 @@ export const COMPANY = {
   /** Доп. контакт (телефон, адрес — опционально) */
   contact: "+998 90 414 01 84",
 };
+
+/** Реквизиты разработчика — печатаются внизу чека (макет «Таблица»). */
+export const DEVELOPER_REQUISITES = {
+  title: "Программное обеспечение",
+  company: "ООО «AB labs innovation»",
+  phone: "+998 90 414 01 84",
+  site: "wms-ombor.uz",
+};

@@ -52,6 +52,19 @@ export const RECEIPT_DOCUMENT_TYPES = [
   { id: "z_report", label: "Z-отчёт (смена)" },
 ];
 
+export const RECEIPT_LAYOUT_OPTIONS = [
+  {
+    id: "list",
+    label: "Список",
+    description: "Классический чек: название товара и сумма строками.",
+  },
+  {
+    id: "table",
+    label: "Таблица",
+    description: "Товары в таблице (№, кол-во, цена, сумма) и реквизиты разработчика внизу.",
+  },
+];
+
 const STORAGE_KEY = (orgId) => `pos.receiptPrintSettings.${orgId}`;
 
 export const PRINT_MODE_OPTIONS = [
@@ -74,6 +87,7 @@ export const DEFAULT_RECEIPT_PRINT_SETTINGS = {
   dpiMode: "203",
   autoPrintOnSale: true,
   printMode: "browser",
+  receiptLayoutId: "table",
   shopInn: "",
   receiptFooter: "Спасибо за покупку!",
   /** Имя принтера — подсказка для кассира */

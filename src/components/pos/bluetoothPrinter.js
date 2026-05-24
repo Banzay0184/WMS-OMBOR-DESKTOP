@@ -3,9 +3,10 @@
  * Chrome/Edge, HTTPS или localhost.
  */
 
+import { DEVELOPER_REQUISITES } from "../../config";
 import { PAYMENT_LABEL, formatDate, formatMoney, formatSalePaymentLabel } from "./posApi";
 import { buildCustomerBalanceRows, getCardReceivedFromCustomer, getCashReceivedFromCustomer } from "./receiptBalance";
-import { getReceiptPrintSettings, getResolvedReceiptLayout } from "./receiptPrintSettings";
+import { getReceiptPrintSettings } from "./receiptPrintSettings";
 
 const ESC = 0x1b;
 const GS = 0x1d;
@@ -118,6 +119,79 @@ const ornamentLine = (width) => {
   const dot = "· ";
   const count = Math.max(4, Math.floor(width / dot.length));
   return dot.repeat(count).slice(0, width);
+};
+
+const padCell = (value, width, align = "left") => {
+  const text = String(value ?? "");
+  if (text.length >= width) return text.slice(0, width);
+  const pad = " ".repeat(width - text.length);
+  if (align === "right") return pad + text;
+  if (align === "center") {
+    const left = Math.floor(pad.length / 2);
+    return pad.slice(0, left) + text + pad.slice(left);
+  }
+  return text + pad;
+};
+
+const buildEscPosTableHeader = (width) => {
+  if (width >= 44) {
+    const cols = [2, 16, 4, 9, 10];
+    return (
+      padCell("№", cols[0], "center") +
+      padCell("Товар", cols[1]) +
+      padCell("Кол", cols[2], "center") +
+      padCell("Цена", cols[3], "right") +
+      padCell("Сумма", cols[4], "right")
+    );
+  }
+  if (width >= 36) {
+    const cols = [2, 14, 3, 8, 8];
+    return (
+      padCell("№", cols[0], "center") +
+      padCell("Товар", cols[1]) +
+      padCell("К", cols[2], "center") +
+      padCell("Цена", cols[3], "right") +
+      padCell("Сум", cols[4], "right")
+    );
+  }
+  return padLine("№", "Товар / Кол / Сумма", width);
+};
+
+const buildEscPosTableRow = (index, item, width) => {
+  const qty = Number(item.quantity) || 0;
+  const unit = Number(item.unit_price) || 0;
+  const name = truncate(item.name_snapshot, width >= 44 ? 16 : width >= 36 ? 14 : width - 8);
+  const sum = formatMoney(item.subtotal);
+
+  if (width >= 44) {
+    const cols = [2, 16, 4, 9, 10];
+    return (
+      padCell(String(index + 1), cols[0], "center") +
+      padCell(name, cols[1]) +
+      padCell(String(qty), cols[2], "center") +
+      padCell(unit > 0 ? formatMoney(unit) : "-", cols[3], "right") +
+      padCell(sum, cols[4], "right")
+    );
+  }
+  if (width >= 36) {
+    const cols = [2, 14, 3, 8, 8];
+    return (
+      padCell(String(index + 1), cols[0], "center") +
+      padCell(name, cols[1]) +
+      padCell(String(qty), cols[2], "center") +
+      padCell(unit > 0 ? formatMoney(unit) : "-", cols[3], "right") +
+      padCell(sum, cols[4], "right")
+    );
+  }
+  return padLine(`${index + 1}. ${name}`, `${qty} x ${sum}`, width);
+};
+
+const buildEscPosDeveloperBlock = (width) => {
+  const { title, company, phone, site } = DEVELOPER_REQUISITES;
+  const lines = [title, company];
+  if (phone) lines.push(`Tel: ${phone}`);
+  if (site) lines.push(site);
+  return lines.map((line) => truncate(line, width)).join("\n") + "\n";
 };
 
 const onDisconnected = () => {
@@ -240,8 +314,8 @@ export const buildEscPosSaleReceipt = ({
   inn,
   footer,
 }) => {
-  const layout = getResolvedReceiptLayout(organizationId);
   const settings = getReceiptPrintSettings(organizationId);
+  const receiptLayoutId = settings.receiptLayoutId === "list" ? "list" : "table";
   const width = lineWidthForPaper(settings.paperSizeId);
   const parts = [];
   const pushCmd = (fn) => parts.push(fn());
@@ -266,19 +340,29 @@ export const buildEscPosSaleReceipt = ({
   pushTxt(padLine("Чек №", sale.sale_number || "—", width) + "\n");
   pushTxt(padLine("Дата", formatDate(sale.created_at), width) + "\n");
   pushTxt(padLine("Время", formatReceiptTime(sale.created_at), width) + "\n");
-  pushTxt(`${"=".repeat(width)}\n`);
-  pushTxt(padLine("ТОВАР", "СУММА", width) + "\n");
-  pushTxt(`${"-".repeat(width)}\n`);
+  pushTxt("=".repeat(width) + "\n");
 
   const items = Array.isArray(sale.items) ? sale.items : [];
-  for (const it of items) {
-    const name = truncate(it.name_snapshot, width);
-    pushTxt(`${name}\n`);
-    const qtyLine = buildItemQtyLine(it);
-    pushTxt(padLine(`  ${qtyLine}`, formatMoney(it.subtotal), width) + "\n");
+  if (receiptLayoutId === "table") {
+    pushCmd(CMD.BOLD_ON);
+    pushTxt(buildEscPosTableHeader(width) + "\n");
+    pushCmd(CMD.BOLD_OFF);
+    pushTxt("-".repeat(width) + "\n");
+    items.forEach((it, index) => {
+      pushTxt(buildEscPosTableRow(index, it, width) + "\n");
+    });
+  } else {
+    pushTxt(padLine("ТОВАР", "СУММА", width) + "\n");
+    pushTxt("-".repeat(width) + "\n");
+    for (const it of items) {
+      const name = truncate(it.name_snapshot, width);
+      pushTxt(`${name}\n`);
+      const qtyLine = buildItemQtyLine(it);
+      pushTxt(padLine(`  ${qtyLine}`, formatMoney(it.subtotal), width) + "\n");
+    }
   }
 
-  pushTxt(`${"=".repeat(width)}\n`);
+  pushTxt("=".repeat(width) + "\n");
   const paymentLabel = formatSalePaymentLabel(sale);
   pushTxt(padLine("Оплата", paymentLabel, width) + "\n");
 
@@ -332,7 +416,7 @@ export const buildEscPosSaleReceipt = ({
     );
   }
 
-  pushTxt(`${"-".repeat(width)}\n`);
+  pushTxt("-".repeat(width) + "\n");
   pushCmd(CMD.BOLD_ON);
   pushTxt(padLine("ИТОГО", `${formatMoney(sale.total_amount)} UZS`, width) + "\n");
   pushCmd(CMD.BOLD_OFF);
@@ -351,11 +435,20 @@ export const buildEscPosSaleReceipt = ({
   if (footer) {
     pushCmd(CMD.CENTER);
     pushTxt("\n");
-    pushTxt(`${"-".repeat(width)}\n`);
+    pushTxt("-".repeat(width) + "\n");
     const footerLines = String(footer).split("\n");
     for (const line of footerLines) {
       pushTxt(`${line.trim()}\n`);
     }
+  }
+
+  if (receiptLayoutId === "table") {
+    pushCmd(CMD.CENTER);
+    pushTxt("\n");
+    pushTxt("-".repeat(width) + "\n");
+    pushTxt(buildEscPosDeveloperBlock(width));
+    pushTxt(`${ornamentLine(width)}\n`);
+  } else if (footer) {
     pushTxt(`${ornamentLine(width)}\n`);
   }
 

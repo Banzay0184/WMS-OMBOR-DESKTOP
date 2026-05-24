@@ -23,6 +23,7 @@ import {
   RECEIPT_DPI_OPTIONS,
   RECEIPT_DOCUMENT_TYPES,
   RECEIPT_FONT_SIZE_OPTIONS,
+  RECEIPT_LAYOUT_OPTIONS,
   RECEIPT_SIZE_PRESETS,
   getReceiptPrintSettings,
   getResolvedReceiptLayout,
@@ -168,6 +169,9 @@ const POSPrinterSettings = () => {
   };
 
   const selectedPreset = RECEIPT_SIZE_PRESETS[settings.paperSizeId] || RECEIPT_SIZE_PRESETS["50"];
+  const selectedLayout =
+    RECEIPT_LAYOUT_OPTIONS.find((opt) => opt.id === settings.receiptLayoutId) ||
+    RECEIPT_LAYOUT_OPTIONS.find((opt) => opt.id === "table");
   const isBluetoothMode = settings.printMode === "bluetooth";
 
   const statusLabel =
@@ -278,37 +282,72 @@ const POSPrinterSettings = () => {
                 Тест Bluetooth
               </button>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="shop-inn" className={LABEL_CLASS}>
-                  ИНН (в чеке)
-                </label>
-                <input
-                  id="shop-inn"
-                  type="text"
-                  value={settings.shopInn || ""}
-                  onChange={(e) => handleChange({ shopInn: e.target.value })}
-                  placeholder="123456789012"
-                  className={INPUT_CLASS}
-                  aria-label="ИНН организации"
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label htmlFor="receipt-footer" className={LABEL_CLASS}>
-                  Текст в конце чека
-                </label>
-                <textarea
-                  id="receipt-footer"
-                  value={settings.receiptFooter || ""}
-                  onChange={(e) => handleChange({ receiptFooter: e.target.value })}
-                  rows={3}
-                  className={INPUT_CLASS + " font-mono resize-y min-h-[80px]"}
-                  aria-label="Футер чека"
-                />
-              </div>
-            </div>
           </div>
+        ) : null}
+      </section>
+
+      <section className="rounded-xl bg-white border border-border shadow-soft p-5 sm:p-6 space-y-5">
+        <div>
+          <h2 className="text-base font-semibold text-primary mb-3">Макет чека</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {RECEIPT_LAYOUT_OPTIONS.map((layoutOpt) => {
+              const selected = settings.receiptLayoutId === layoutOpt.id;
+              return (
+                <button
+                  key={layoutOpt.id}
+                  type="button"
+                  onClick={() => handleChange({ receiptLayoutId: layoutOpt.id })}
+                  aria-pressed={selected}
+                  aria-label={`Макет: ${layoutOpt.label}`}
+                  tabIndex={0}
+                  className={
+                    "text-left rounded-xl border p-4 transition focus:outline-none focus:ring-2 focus:ring-primary/40 " +
+                    (selected
+                      ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                      : "border-border hover:border-primary/50")
+                  }
+                >
+                  <div className="font-semibold text-primary">{layoutOpt.label}</div>
+                  <p className="text-xs text-muted mt-1">{layoutOpt.description}</p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="shop-inn" className={LABEL_CLASS}>
+              ИНН магазина (в шапке чека)
+            </label>
+            <input
+              id="shop-inn"
+              type="text"
+              value={settings.shopInn || ""}
+              onChange={(e) => handleChange({ shopInn: e.target.value })}
+              placeholder="123456789012"
+              className={INPUT_CLASS}
+              aria-label="ИНН организации"
+            />
+          </div>
+          <div>
+            <label htmlFor="receipt-footer" className={LABEL_CLASS}>
+              Текст в конце чека
+            </label>
+            <textarea
+              id="receipt-footer"
+              value={settings.receiptFooter || ""}
+              onChange={(e) => handleChange({ receiptFooter: e.target.value })}
+              rows={3}
+              className={INPUT_CLASS + " font-mono resize-y min-h-[80px]"}
+              aria-label="Футер чека"
+            />
+          </div>
+        </div>
+        {settings.receiptLayoutId !== "list" ? (
+          <p className="text-xs text-muted">
+            В макете «Таблица» ниже футера автоматически печатаются реквизиты разработчика системы.
+          </p>
         ) : null}
       </section>
 
@@ -479,7 +518,8 @@ const POSPrinterSettings = () => {
       <section className="rounded-xl bg-white border border-border shadow-soft p-5 sm:p-6">
         <h2 className="text-base font-semibold text-primary mb-3">Предпросмотр чека</h2>
         <p className="text-xs text-muted mb-4">
-          {selectedPreset.label} · Courier · {settings.fontSizePt} pt · высота подстраивается под содержимое
+          {selectedPreset.label} · {selectedLayout?.label ?? "Таблица"} · Courier · {settings.fontSizePt} pt ·
+          высота подстраивается под содержимое
         </p>
         <div className="flex justify-center rounded-xl border border-border bg-gradient-to-b from-secondary/40 to-white p-5 overflow-x-auto">
           <div
