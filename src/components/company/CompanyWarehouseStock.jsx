@@ -7,7 +7,7 @@ import { useOrganizationMemberPermissions } from "../../utils/useOrganizationMem
 import { useOrganizationTariffFeatures } from "../../utils/useOrganizationTariffFeatures";
 
 const rowDisplayName = (row, canUseIkpu) => {
-  const our = row?.our_name?.trim() || "";
+  const our = row?.our_name?.trim() || row?.catalog_name?.trim() || "";
   if (canUseIkpu) {
     return our || row?.ikpu_name?.trim() || "—";
   }
@@ -183,6 +183,10 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
   const [selectedKeys, setSelectedKeys] = useState(() => new Set());
   const [selectedRowsByKey, setSelectedRowsByKey] = useState(() => new Map());
 
+  const markingLoadSeqRef = useRef(0);
+  const unmarkedLoadSeqRef = useRef(0);
+  const outgoingLoadSeqRef = useRef(0);
+
   const loadWarehouse = useCallback(async () => {
     if (!organizationId || !warehouseId) return;
     setWarehouseLoading(true);
@@ -224,6 +228,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
 
   const loadMarkingUnits = useCallback(async () => {
     if (!organizationId || !warehouseId || !canLoadWarehouseStock) return;
+    const requestSeq = ++markingLoadSeqRef.current;
     setRowsLoading(true);
     setError("");
     setStockAccessError("");
@@ -237,6 +242,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         { method: "POST", body: JSON.stringify(payload) }
       );
       const data = await res.json().catch(() => ({}));
+      if (requestSeq !== markingLoadSeqRef.current) return;
       if (!res.ok) {
         if (handleStockForbidden(res.status, data.detail)) {
           setRows([]);
@@ -255,12 +261,15 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       setTotalCount(typeof data.total_count === "number" ? data.total_count : 0);
       setFilteredCount(typeof data.count === "number" ? data.count : 0);
     } catch (err) {
+      if (requestSeq !== markingLoadSeqRef.current) return;
       setError(err.message ?? "Ошибка сети");
       setRows([]);
       setTotalCount(0);
       setFilteredCount(0);
     } finally {
-      setRowsLoading(false);
+      if (requestSeq === markingLoadSeqRef.current) {
+        setRowsLoading(false);
+      }
     }
   }, [
     organizationId,
@@ -299,12 +308,13 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
 
   useEffect(() => {
     if (!canUseMarking || !canLoadWarehouseStock || permissionsLoading) return;
-    if (section !== "marked" && section !== "unmarked") return;
+    if (section !== "marked") return;
     void loadMarkingUnits();
   }, [canUseMarking, canLoadWarehouseStock, permissionsLoading, section, loadMarkingUnits]);
 
   const loadUnmarkedStock = useCallback(async () => {
     if (!organizationId || !warehouseId || !canLoadWarehouseStock) return;
+    const requestSeq = ++unmarkedLoadSeqRef.current;
     setUnmarkedLoading(true);
     setUnmarkedError("");
     setStockAccessError("");
@@ -318,6 +328,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         `platform/organizations/${organizationId}/warehouses/${warehouseId}/unmarked-stock/?${params.toString()}`
       );
       const data = await res.json().catch(() => ({}));
+      if (requestSeq !== unmarkedLoadSeqRef.current) return;
       if (!res.ok) {
         if (handleStockForbidden(res.status, data.detail)) {
           setUnmarkedRows([]);
@@ -336,12 +347,15 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       setUnmarkedTotalCount(typeof data.total_count === "number" ? data.total_count : 0);
       setUnmarkedFilteredCount(typeof data.count === "number" ? data.count : 0);
     } catch (err) {
+      if (requestSeq !== unmarkedLoadSeqRef.current) return;
       setUnmarkedError(err.message ?? "Ошибка сети");
       setUnmarkedRows([]);
       setUnmarkedTotalCount(0);
       setUnmarkedFilteredCount(0);
     } finally {
-      setUnmarkedLoading(false);
+      if (requestSeq === unmarkedLoadSeqRef.current) {
+        setUnmarkedLoading(false);
+      }
     }
   }, [
     organizationId,
@@ -356,6 +370,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
 
   const loadOutgoingMarkingUnits = useCallback(async () => {
     if (!organizationId || !warehouseId || !canLoadWarehouseStock) return;
+    const requestSeq = ++outgoingLoadSeqRef.current;
     setOutgoingLoading(true);
     setOutgoingError("");
     try {
@@ -368,6 +383,7 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
         { method: "POST", body: JSON.stringify(payload) }
       );
       const data = await res.json().catch(() => ({}));
+      if (requestSeq !== outgoingLoadSeqRef.current) return;
       if (!res.ok) {
         if (handleStockForbidden(res.status, data.detail)) {
           setOutgoingRows([]);
@@ -386,12 +402,15 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
       setOutgoingTotalCount(typeof data.total_count === "number" ? data.total_count : 0);
       setOutgoingFilteredCount(typeof data.count === "number" ? data.count : 0);
     } catch (err) {
+      if (requestSeq !== outgoingLoadSeqRef.current) return;
       setOutgoingError(err.message ?? "Ошибка сети");
       setOutgoingRows([]);
       setOutgoingTotalCount(0);
       setOutgoingFilteredCount(0);
     } finally {
-      setOutgoingLoading(false);
+      if (requestSeq === outgoingLoadSeqRef.current) {
+        setOutgoingLoading(false);
+      }
     }
   }, [
     organizationId,
@@ -403,6 +422,18 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     handleStockForbidden,
     clearForbiddenAppPage,
   ]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
+  useEffect(() => {
+    setUnmarkedPage(1);
+  }, [unmarkedDebouncedSearch]);
+
+  useEffect(() => {
+    setOutgoingPage(1);
+  }, [outgoingDebouncedSearch]);
 
   useEffect(() => {
     if (permissionsLoading || !canLoadWarehouseStock) return;

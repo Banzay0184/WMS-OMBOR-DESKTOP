@@ -86,6 +86,39 @@ const ProtectedRoute = ({ children, requireContext }) => {
     fetchContexts,
   ]);
 
+  /** Refresh: activeContext уже в localStorage, но каталог контекстов ещё не подгружен. */
+  useEffect(() => {
+    if (!authReady) return;
+    if (!isAuthenticated) return;
+    if (!requireContext) return;
+    if (availableContexts !== null) return;
+
+    const contextMatchesRoute =
+      (requireContext === "pos" && activeContext?.type === "pos") ||
+      (requireContext === "platform" && activeContext?.type === "platform") ||
+      (requireContext === "organization" && activeContext?.type === "organization");
+
+    if (!contextMatchesRoute) return;
+
+    let cancelled = false;
+    setCheckingContexts(true);
+    fetchContexts()
+      .finally(() => {
+        if (!cancelled) setCheckingContexts(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    authReady,
+    isAuthenticated,
+    requireContext,
+    activeContext?.type,
+    activeContext?.organizationId,
+    availableContexts,
+    fetchContexts,
+  ]);
+
   if (!authReady) {
     return null;
   }
@@ -94,15 +127,26 @@ const ProtectedRoute = ({ children, requireContext }) => {
     return <Navigate to="/" replace />;
   }
 
+  const contextMatchesRoute =
+    (requireContext === "pos" && activeContext?.type === "pos") ||
+    (requireContext === "platform" && activeContext?.type === "platform") ||
+    (requireContext === "organization" && activeContext?.type === "organization");
+
   const shouldWaitForContextResolution =
     Boolean(requireContext) &&
     !activeContext &&
     (checkingContexts || availableContexts === null);
+  const shouldWaitForContextCatalog =
+    Boolean(requireContext) && contextMatchesRoute && availableContexts === null;
   const shouldWaitForOrganizationContexts =
     requireContext === "organization" &&
     activeContext?.type === "organization" &&
     availableContexts === null;
-  if (shouldWaitForContextResolution || shouldWaitForOrganizationContexts) {
+  if (
+    shouldWaitForContextResolution ||
+    shouldWaitForContextCatalog ||
+    shouldWaitForOrganizationContexts
+  ) {
     return (
       <div className="min-h-[40vh] flex items-center justify-center text-sm text-muted" role="status">
         Загрузка…
@@ -113,6 +157,13 @@ const ProtectedRoute = ({ children, requireContext }) => {
   if (requireContext === "platform") {
     if (!isDeveloper || activeContext?.type !== "platform") {
       return <Navigate to="/select-context" replace />;
+    }
+    if (availableContexts === null) {
+      return (
+        <div className="min-h-[40vh] flex items-center justify-center text-sm text-muted" role="status">
+          Загрузка…
+        </div>
+      );
     }
   }
 
@@ -159,14 +210,14 @@ const ProtectedRoute = ({ children, requireContext }) => {
     if (id == null) {
       return <Navigate to="/select-context" replace />;
     }
-    const orgs = availableContexts?.organizations;
-    if (checkingContexts) {
+    if (availableContexts === null || checkingContexts) {
       return (
         <div className="min-h-[40vh] flex items-center justify-center text-sm text-muted" role="status">
           Загрузка…
         </div>
       );
     }
+    const orgs = availableContexts?.organizations;
     if (!Array.isArray(orgs)) {
       return <Navigate to="/select-context" replace />;
     }

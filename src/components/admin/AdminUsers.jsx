@@ -2,6 +2,26 @@ import { useState, useEffect, useCallback } from "react";
 import { authFetch } from "../../api/client";
 import { formatPhoneDisplay, getPhoneDigits, PHONE_PLACEHOLDER } from "../../utils/phone";
 
+const PASSWORD_MIN_LENGTH = 8;
+
+const generateTemporaryPassword = () => {
+  const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  let out = "";
+  const arr = new Uint32Array(12);
+  crypto.getRandomValues(arr);
+  for (let i = 0; i < 12; i += 1) {
+    out += chars[arr[i] % chars.length];
+  }
+  return out;
+};
+
+const formatPasswordApiError = (json) => {
+  const raw = json?.password;
+  if (Array.isArray(raw) && raw.length) return String(raw[0]);
+  if (typeof raw === "string" && raw.trim()) return raw;
+  return json?.detail ?? "Не удалось сбросить пароль.";
+};
+
 const AdminUsers = () => {
   const [data, setData] = useState({ results: [], count: 0, next: null, previous: null });
   const [loading, setLoading] = useState(true);
@@ -28,6 +48,12 @@ const AdminUsers = () => {
   const [editIsStaff, setEditIsStaff] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState("");
+  const [resetUser, setResetUser] = useState(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState("");
+  const [resetSuccess, setResetSuccess] = useState(null);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -150,6 +176,77 @@ const AdminUsers = () => {
     setEditPassword("");
     setEditIsActive(true);
     setEditIsStaff(false);
+  };
+
+  const handleResetOpen = (u) => {
+    if (!u) return;
+    setResetError("");
+    setResetSuccess(null);
+    setResetUser(u);
+    setResetPassword("");
+    setResetPasswordConfirm("");
+  };
+
+  const handleResetClose = () => {
+    if (resetLoading) return;
+    setResetUser(null);
+    setResetPassword("");
+    setResetPasswordConfirm("");
+    setResetError("");
+    setResetSuccess(null);
+  };
+
+  const handleGenerateResetPassword = () => {
+    const next = generateTemporaryPassword();
+    setResetPassword(next);
+    setResetPasswordConfirm(next);
+    setResetError("");
+  };
+
+  const handleResetSubmit = async (e) => {
+    e.preventDefault();
+    if (!resetUser?.id) return;
+    setResetError("");
+    setResetSuccess(null);
+
+    const password = resetPassword.trim();
+    const confirm = resetPasswordConfirm.trim();
+    if (!password) {
+      setResetError("Введите новый пароль.");
+      return;
+    }
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      setResetError(`Пароль должен быть не короче ${PASSWORD_MIN_LENGTH} символов.`);
+      return;
+    }
+    if (password !== confirm) {
+      setResetError("Пароли не совпадают.");
+      return;
+    }
+
+    setResetLoading(true);
+    try {
+      const res = await authFetch(`platform/users/${resetUser.id}/reset-password/`, {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setResetError(formatPasswordApiError(json));
+        return;
+      }
+      setResetSuccess({
+        label: resetUser.username || resetUser.phone || `ID ${resetUser.id}`,
+        password,
+        detail: json.detail ?? "Пароль обновлён.",
+      });
+      setResetPassword("");
+      setResetPasswordConfirm("");
+    } catch (err) {
+      setResetError(err.message ?? "Ошибка сети");
+    } finally {
+      setResetLoading(false);
+    }
   };
 
   const handleEditSubmit = async (e) => {
@@ -420,6 +517,14 @@ const AdminUsers = () => {
                         </button>
                         <button
                           type="button"
+                          onClick={() => handleResetOpen(u)}
+                          className="text-sm px-2 py-1 rounded border border-amber-200 text-amber-800 hover:bg-amber-50 transition mr-2"
+                          aria-label={`Сбросить пароль пользователя ${u.username ?? u.phone ?? u.id}`}
+                        >
+                          Сбросить пароль
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setDeleteUserId(u.id)}
                           className="text-sm px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 transition"
                           aria-label={`Удалить пользователя ${u.username ?? u.phone ?? u.id}`}
@@ -473,6 +578,114 @@ const AdminUsers = () => {
                 Отмена
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {resetUser && (
+        <div
+          className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reset-password-title"
+        >
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-5 sm:p-6">
+            <h2 id="reset-password-title" className="text-lg font-medium text-muted mb-2">
+              Сброс пароля
+            </h2>
+            <p className="text-sm text-muted mb-4">
+              Пользователь:{" "}
+              <span className="font-medium text-muted">
+                {resetUser.username ?? resetUser.phone ?? `ID ${resetUser.id}`}
+              </span>
+              {resetUser.phone ? (
+                <span className="block text-muted/80 mt-0.5">{resetUser.phone}</span>
+              ) : null}
+            </p>
+
+            {resetSuccess ? (
+              <div className="space-y-4">
+                <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2" role="status">
+                  {resetSuccess.detail} Передайте пароль пользователю безопасным способом.
+                </p>
+                <div>
+                  <p className="text-sm font-medium text-muted mb-1.5">Новый пароль</p>
+                  <div className="rounded-lg border border-border bg-secondary/30 px-4 py-3 font-mono text-sm text-muted break-all select-all">
+                    {resetSuccess.password}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleResetClose}
+                  className="w-full px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover transition"
+                >
+                  Готово
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleResetSubmit} className="space-y-4">
+                <div>
+                  <label htmlFor="reset-password" className={labelClassName}>
+                    Новый пароль
+                  </label>
+                  <input
+                    id="reset-password"
+                    type="text"
+                    value={resetPassword}
+                    onChange={(e) => setResetPassword(e.target.value)}
+                    className={inputClassName}
+                    placeholder={`Минимум ${PASSWORD_MIN_LENGTH} символов`}
+                    autoComplete="new-password"
+                    aria-label="Новый пароль"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="reset-password-confirm" className={labelClassName}>
+                    Подтверждение пароля
+                  </label>
+                  <input
+                    id="reset-password-confirm"
+                    type="text"
+                    value={resetPasswordConfirm}
+                    onChange={(e) => setResetPasswordConfirm(e.target.value)}
+                    className={inputClassName}
+                    placeholder="Повторите пароль"
+                    autoComplete="new-password"
+                    aria-label="Подтверждение пароля"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleGenerateResetPassword}
+                  disabled={resetLoading}
+                  className="text-sm px-3 py-2 rounded-lg border border-border text-muted hover:bg-secondary transition disabled:opacity-50"
+                >
+                  Сгенерировать пароль
+                </button>
+                {resetError ? (
+                  <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2" role="alert">
+                    {resetError}
+                  </p>
+                ) : null}
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={resetLoading}
+                    className="px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition disabled:opacity-50"
+                  >
+                    {resetLoading ? "Сохранение…" : "Сбросить пароль"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetClose}
+                    disabled={resetLoading}
+                    className="px-4 py-2.5 border border-border rounded-lg text-muted hover:bg-secondary transition disabled:opacity-50"
+                  >
+                    Отмена
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

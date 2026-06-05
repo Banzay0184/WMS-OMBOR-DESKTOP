@@ -37,6 +37,46 @@ const normalizeInn = (value) => (value || "").replace(/\D/g, "");
 /** ИКПУ в справочнике — 17 цифр; сравниваем только цифры. */
 const normalizeIkpuDigits = (value) => String(value ?? "").replace(/\D/g, "");
 
+/** Пустая строка счёт‑фактуры (не участвует в сохранении). */
+const isBlankInvoiceReceiptRow = (row) => {
+  const ourName = (row.name || "").trim();
+  const ikpuName = (row.ikpuName || "").trim();
+  const ikpu = (row.ikpu || "").trim();
+  const qty = Number(row.quantity) || 0;
+  const price = Number(row.unitPrice) || 0;
+  const hasMarkings =
+    Array.isArray(row.markings) && row.markings.some((m) => String(m ?? "").trim() !== "");
+  const catalogId = row.catalogProductId != null;
+  return (
+    !ourName &&
+    !ikpuName &&
+    !ikpu &&
+    !catalogId &&
+    qty <= 0 &&
+    price <= 0 &&
+    !hasMarkings
+  );
+};
+
+/** Проверка обязательных полей строк перед сохранением. null — ок. */
+const validateInvoiceReceiptItems = (items) => {
+  const activeRows = items.filter((row) => !isBlankInvoiceReceiptRow(row));
+  if (activeRows.length === 0) {
+    return "Добавьте хотя бы одну позицию: укажите «Наше наименование» и «Цена за ед.».";
+  }
+  for (let i = 0; i < items.length; i += 1) {
+    const row = items[i];
+    if (isBlankInvoiceReceiptRow(row)) continue;
+    if (!(row.name || "").trim()) {
+      return `Строка ${i + 1}: укажите «Наше наименование».`;
+    }
+    if (!(Number(row.unitPrice) > 0)) {
+      return `Строка ${i + 1}: укажите «Цена за ед.» больше нуля.`;
+    }
+  }
+  return null;
+};
+
 const findCatalogProductIdByIkpu = (products, ikpuDigits) => {
   if (!ikpuDigits || ikpuDigits.length !== 17) return null;
   const p = products.find((x) => normalizeIkpuDigits(x.ikpu_code) === ikpuDigits);
@@ -51,12 +91,14 @@ const buildSupplierSearchLabel = (s) => {
 
 const buildCatalogProductLabel = (p) => {
   const name = (p.name || "").trim() || `Товар #${p.id}`;
+  const ikpuName = (p.ikpu_name || "").trim();
   const ik = (p.ikpu_code || "").trim();
   const upc = (p.upc || "").trim();
-  if (ik && upc) return `${name} · ИКПУ ${ik} · UPC ${upc}`;
-  if (ik) return `${name} · ИКПУ ${ik}`;
-  if (upc) return `${name} · UPC ${upc}`;
-  return name;
+  const namePart = ikpuName && ikpuName !== name ? `${name} · ${ikpuName}` : name;
+  if (ik && upc) return `${namePart} · ИКПУ ${ik} · UPC ${upc}`;
+  if (ik) return `${namePart} · ИКПУ ${ik}`;
+  if (upc) return `${namePart} · UPC ${upc}`;
+  return namePart;
 };
 
 const formatDateDdMmYyyy = (iso) => {
@@ -1489,9 +1531,10 @@ const WarehouseReceipt = () => {
       prev.map((it) => {
         if (it.id !== rowId) return it;
         const catalogName = p.name ?? "";
+        const catalogIkpuName = (p.ikpu_name ?? "").trim();
         const next = {
               ...it,
-          ikpuName: catalogName,
+          ikpuName: catalogIkpuName || catalogName,
               unit: (p.unit || "шт").trim() || "шт",
               ikpu: (p.ikpu_code ?? "").trim(),
               upc: (p.upc ?? "").trim(),
@@ -1721,8 +1764,9 @@ const WarehouseReceipt = () => {
         let productsSnapshot = await fetchProductsSnapshot();
 
         for (const row of items) {
-          const name = (row.ikpuName || row.name || "").trim();
-          if (!name || row.catalogProductId != null) continue;
+          const ourName = (row.name || "").trim();
+          const ikpuName = (row.ikpuName || "").trim();
+          if (!ourName || row.catalogProductId != null) continue;
 
           const ikpuDigits = normalizeIkpuDigits(row.ikpu);
           const existingId = findCatalogProductIdByIkpu(productsSnapshot, ikpuDigits);
@@ -1735,7 +1779,8 @@ const WarehouseReceipt = () => {
             const res = await authFetch(`platform/organizations/${organizationId}/products/`, {
               method: "POST",
               body: JSON.stringify({
-                name,
+                name: ourName,
+                ikpu_name: ikpuName,
                 ikpu_code: ikpuDigits,
                 ...(canUseUpc ? { upc: (row.upc || "").trim() } : {}),
                 unit: (row.unit || "шт").trim() || "шт",
@@ -1764,7 +1809,7 @@ const WarehouseReceipt = () => {
                 }
               }
               errs.push(
-                `${name}: ${detailStr || (typeof ikpuMsg === "string" ? ikpuMsg : "") || "ошибка сохранения"}`
+                `${ourName}: ${detailStr || (typeof ikpuMsg === "string" ? ikpuMsg : "") || "ошибка сохранения"}`
               );
               continue;
             }
@@ -1815,10 +1860,16 @@ const WarehouseReceipt = () => {
         return;
       }
 
+      const itemsValidationError = validateInvoiceReceiptItems(items);
+      if (itemsValidationError) {
+        setInvoiceSaveError(itemsValidationError);
+        return;
+      }
+
       // Курс пересчёта в UZS: 1 при базовой валюте, иначе зафиксированный курс из формы.
       const ratePayload = isForeignCurrency ? exchangeRateNumber : 1;
 
-      const linesPayload = items.map((row) => {
+      const linesPayload = items.filter((row) => !isBlankInvoiceReceiptRow(row)).map((row) => {
         const rowCurrency = resolveRowCurrencyCode(row.lineCurrencyCode);
         const priceDoc = Number(row.unitPrice ?? 0) || 0;
         // UZS-цена пересчитывается только для строк, чья валюта совпадает с

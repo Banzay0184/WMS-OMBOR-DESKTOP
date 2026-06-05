@@ -3,11 +3,14 @@ import { useAuth } from "../../context/AuthContext";
 import { authFetch } from "../../api/client";
 import { getImageUrl } from "../../config";
 import { useOrganizationTariffFeatures } from "../../utils/useOrganizationTariffFeatures";
+import { normalizeUpcDigits } from "../../utils/productLabelPrint";
+import ProductLabelPrintModal from "./ProductLabelPrintModal";
+import ProductLabelPrintSettingsPanel from "./ProductLabelPrintSettingsPanel";
 
 const buildProductsSubtitle = ({ canUseIkpu, canUseUpc }) => {
-  const parts = ["наименование", "ед. изм."];
-  if (canUseIkpu) parts.splice(1, 0, "ИКПУ");
-  if (canUseUpc) parts.splice(canUseIkpu ? 2 : 1, 0, "UPC");
+  const parts = ["наше наименование", "ед. изм."];
+  if (canUseIkpu) parts.splice(1, 0, "наименование по ИКПУ", "ИКПУ");
+  if (canUseUpc) parts.splice(canUseIkpu ? 3 : 1, 0, "UPC");
   return `Справочник номенклатуры (${parts.join(", ")}) для накладных.`;
 };
 
@@ -31,9 +34,11 @@ const CompanyProducts = () => {
   const [modalMode, setModalMode] = useState("create");
   const [modalProductId, setModalProductId] = useState(null);
   const [modalName, setModalName] = useState("");
+  const [modalIkpuName, setModalIkpuName] = useState("");
   const [modalIkpu, setModalIkpu] = useState("");
   const [modalUpc, setModalUpc] = useState("");
   const [modalUnit, setModalUnit] = useState("шт");
+  const [modalSalePrice, setModalSalePrice] = useState("");
   const [modalImageFile, setModalImageFile] = useState(null);
   const [modalExistingImageUrl, setModalExistingImageUrl] = useState(null);
   const [modalImagePreviewUrl, setModalImagePreviewUrl] = useState(null);
@@ -43,8 +48,16 @@ const CompanyProducts = () => {
 
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [printProduct, setPrintProduct] = useState(null);
+  const [showLabelSettings, setShowLabelSettings] = useState(false);
+  const [labelSettingsVersion, setLabelSettingsVersion] = useState(0);
 
   const { canUseUpc, canUseInvoiceIkpu } = useOrganizationTariffFeatures(organizationId);
+
+  const moneyFmt = new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
 
   const loadProducts = useCallback(async () => {
     if (!organizationId) return;
@@ -93,9 +106,11 @@ const CompanyProducts = () => {
     setModalMode("create");
     setModalProductId(null);
     setModalName("");
+    setModalIkpuName("");
     setModalIkpu("");
     setModalUpc("");
     setModalUnit("шт");
+    setModalSalePrice("");
     setModalImageFile(null);
     setModalExistingImageUrl(null);
     setModalLoading(false);
@@ -112,9 +127,11 @@ const CompanyProducts = () => {
     setModalMode("create");
     setModalProductId(null);
     setModalName("");
+    setModalIkpuName("");
     setModalIkpu("");
     setModalUpc("");
     setModalUnit("шт");
+    setModalSalePrice("");
     setModalImageFile(null);
     setModalExistingImageUrl(null);
     setModalImagePreviewUrl((prev) => {
@@ -136,9 +153,15 @@ const CompanyProducts = () => {
     setModalMode("edit");
     setModalProductId(p.id);
     setModalName(p.name ?? "");
+    setModalIkpuName(p.ikpu_name ?? "");
     setModalIkpu(p.ikpu_code ?? "");
     setModalUpc(p.upc ?? "");
     setModalUnit((p.unit || "шт").trim() || "шт");
+    setModalSalePrice(
+      p.sale_price != null && Number.isFinite(Number(p.sale_price)) && Number(p.sale_price) > 0
+        ? String(p.sale_price)
+        : ""
+    );
     setModalImageFile(null);
     setModalExistingImageUrl(p.image ?? null);
     setModalImagePreviewUrl((prev) => {
@@ -170,10 +193,11 @@ const CompanyProducts = () => {
 
     const nextName = modalName.trim();
     if (!nextName) {
-      setModalError("Введите наименование.");
+      setModalError("Введите наше наименование.");
       return;
     }
 
+    const nextIkpuName = canUseInvoiceIkpu ? modalIkpuName.trim() : "";
     const ikpuDigits = canUseInvoiceIkpu ? normalizeIkpu(modalIkpu) : "";
     if (canUseInvoiceIkpu && ikpuDigits && ikpuDigits.length !== 17) {
       setModalError("ИКПУ: ровно 17 цифр или оставьте пустым.");
@@ -182,6 +206,12 @@ const CompanyProducts = () => {
     const upc = canUseUpc ? (modalUpc || "").trim() : "";
 
     const unit = modalUnit.trim() || "шт";
+    const salePriceRaw = modalSalePrice.trim().replace(/\s/g, "").replace(",", ".");
+    const salePriceParsed = salePriceRaw ? Number(salePriceRaw) : null;
+    const salePricePayload =
+      salePriceParsed != null && Number.isFinite(salePriceParsed) && salePriceParsed > 0
+        ? salePriceParsed
+        : null;
 
     setModalLoading(true);
     setModalError("");
@@ -196,9 +226,13 @@ const CompanyProducts = () => {
               body: (() => {
                 const fd = new FormData();
                 fd.append("name", nextName);
-                if (canUseInvoiceIkpu) fd.append("ikpu_code", ikpuDigits);
+                if (canUseInvoiceIkpu) {
+                  fd.append("ikpu_name", nextIkpuName);
+                  fd.append("ikpu_code", ikpuDigits);
+                }
                 if (canUseUpc) fd.append("upc", upc);
                 fd.append("unit", unit);
+                if (salePricePayload != null) fd.append("sale_price", String(salePricePayload));
                 fd.append("image", modalImageFile);
                 return fd;
               })(),
@@ -207,9 +241,10 @@ const CompanyProducts = () => {
               method: "POST",
               body: JSON.stringify({
                 name: nextName,
-                ...(canUseInvoiceIkpu ? { ikpu_code: ikpuDigits } : {}),
+                ...(canUseInvoiceIkpu ? { ikpu_name: nextIkpuName, ikpu_code: ikpuDigits } : {}),
                 ...(canUseUpc ? { upc } : {}),
                 unit,
+                sale_price: salePricePayload,
               }),
             });
         const data = await res.json().catch(() => ({}));
@@ -231,9 +266,13 @@ const CompanyProducts = () => {
               body: (() => {
                 const fd = new FormData();
                 fd.append("name", nextName);
-                if (canUseInvoiceIkpu) fd.append("ikpu_code", ikpuDigits);
+                if (canUseInvoiceIkpu) {
+                  fd.append("ikpu_name", nextIkpuName);
+                  fd.append("ikpu_code", ikpuDigits);
+                }
                 if (canUseUpc) fd.append("upc", upc);
                 fd.append("unit", unit);
+                if (salePricePayload != null) fd.append("sale_price", String(salePricePayload));
                 fd.append("image", modalImageFile);
                 return fd;
               })(),
@@ -242,9 +281,10 @@ const CompanyProducts = () => {
               method: "PATCH",
               body: JSON.stringify({
                 name: nextName,
-                ...(canUseInvoiceIkpu ? { ikpu_code: ikpuDigits } : {}),
+                ...(canUseInvoiceIkpu ? { ikpu_name: nextIkpuName, ikpu_code: ikpuDigits } : {}),
                 ...(canUseUpc ? { upc } : {}),
                 unit,
+                sale_price: salePricePayload,
               }),
             });
         const data = await res.json().catch(() => ({}));
@@ -330,16 +370,36 @@ const CompanyProducts = () => {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={openCreateModal}
-          disabled={forbiddenProducts}
-          className="px-4 py-2.5 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition disabled:opacity-50 disabled:pointer-events-none"
-          aria-label="Добавить товар"
-        >
-          Добавить
-        </button>
+        <div className="flex flex-wrap gap-2">
+          {canUseUpc ? (
+            <button
+              type="button"
+              onClick={() => setShowLabelSettings((v) => !v)}
+              className="px-4 py-2.5 rounded-lg border border-border text-muted font-medium hover:bg-secondary hover:text-primary transition"
+              aria-expanded={showLabelSettings}
+              aria-label="Настройки печати этикеток"
+            >
+              {showLabelSettings ? "Скрыть настройки печати" : "Настройки печати этикеток"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={openCreateModal}
+            disabled={forbiddenProducts}
+            className="px-4 py-2.5 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition disabled:opacity-50 disabled:pointer-events-none"
+            aria-label="Добавить товар"
+          >
+            Добавить
+          </button>
+        </div>
       </div>
+
+      {canUseUpc && showLabelSettings ? (
+        <ProductLabelPrintSettingsPanel
+          organizationId={organizationId}
+          onSettingsChange={() => setLabelSettingsVersion((v) => v + 1)}
+        />
+      ) : null}
 
       {error ? (
         <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2" role="alert">
@@ -358,12 +418,18 @@ const CompanyProducts = () => {
               <thead>
                 <tr className="border-b border-border bg-secondary/50">
                   <th className="px-4 py-3 text-sm font-medium text-muted w-24">Фото</th>
-                  <th className="px-4 py-3 text-sm font-medium text-muted">Наименование</th>
+                  <th className="px-4 py-3 text-sm font-medium text-muted">Наше наименование</th>
                   {canUseInvoiceIkpu ? (
-                    <th className="px-4 py-3 text-sm font-medium text-muted">ИКПУ</th>
+                    <>
+                      <th className="px-4 py-3 text-sm font-medium text-muted">Наименование по ИКПУ</th>
+                      <th className="px-4 py-3 text-sm font-medium text-muted">ИКПУ</th>
+                    </>
                   ) : null}
                   {canUseUpc ? (
                     <th className="px-4 py-3 text-sm font-medium text-muted">UPC</th>
+                  ) : null}
+                  {canUseUpc ? (
+                    <th className="px-4 py-3 text-sm font-medium text-muted">Розница</th>
                   ) : null}
                   <th className="px-4 py-3 text-sm font-medium text-muted">Ед. изм.</th>
                   <th className="px-4 py-3 text-sm font-medium text-muted">Действия</th>
@@ -384,16 +450,42 @@ const CompanyProducts = () => {
                         <div className="h-12 w-12 rounded-lg border border-dashed border-border bg-neutral-50" aria-hidden="true" />
                       )}
                     </td>
-                    <td className="px-4 py-3 text-muted">{p.name ?? "—"}</td>
+                    <td className="px-4 py-3 text-muted">{p.name?.trim() ? p.name : "—"}</td>
                     {canUseInvoiceIkpu ? (
-                      <td className="px-4 py-3 text-muted font-mono text-sm">{p.ikpu_code?.trim() ? p.ikpu_code : "—"}</td>
+                      <>
+                        <td className="px-4 py-3 text-muted">{p.ikpu_name?.trim() ? p.ikpu_name : "—"}</td>
+                        <td className="px-4 py-3 text-muted font-mono text-sm">{p.ikpu_code?.trim() ? p.ikpu_code : "—"}</td>
+                      </>
                     ) : null}
                     {canUseUpc ? (
                       <td className="px-4 py-3 text-muted font-mono text-sm">{p.upc?.trim() ? p.upc : "—"}</td>
                     ) : null}
+                    {canUseUpc ? (
+                      <td className="px-4 py-3 text-muted text-sm">
+                        {p.sale_price != null && Number(p.sale_price) > 0
+                          ? `${moneyFmt.format(Number(p.sale_price))} UZS`
+                          : "—"}
+                      </td>
+                    ) : null}
                     <td className="px-4 py-3 text-muted">{(p.unit || "шт").trim() || "шт"}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
+                        {canUseUpc ? (
+                          <button
+                            type="button"
+                            onClick={() => setPrintProduct(p)}
+                            disabled={!normalizeUpcDigits(p.upc)}
+                            title={
+                              normalizeUpcDigits(p.upc)
+                                ? "Печать этикетки с названием, UPC и ценой"
+                                : "Укажите UPC в карточке товара"
+                            }
+                            className="px-3 py-2 rounded-lg border border-primary/30 text-primary hover:bg-primary/5 transition disabled:opacity-40 disabled:pointer-events-none"
+                            aria-label={`Печать этикетки ${p.name ?? "товар"}`}
+                          >
+                            Печать этикетки
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => openEditModal(p)}
@@ -437,7 +529,7 @@ const CompanyProducts = () => {
             <form onSubmit={handleModalSubmit} className="space-y-4">
               <div>
                 <label htmlFor="product-name" className={LABEL_CLASS}>
-                  Наименование
+                  Наше наименование
                 </label>
                 <input
                   id="product-name"
@@ -446,11 +538,29 @@ const CompanyProducts = () => {
                   disabled={modalLoading}
                   onChange={(e) => setModalName(e.target.value)}
                   className={INPUT_CLASS}
-                  placeholder="Наименование"
-                  aria-label="Наименование товара"
+                  placeholder="Например: Холодильник ABC-100"
+                  aria-label="Наше наименование товара"
                   required
                 />
               </div>
+
+              {canUseInvoiceIkpu ? (
+                <div>
+                  <label htmlFor="product-ikpu-name" className={LABEL_CLASS}>
+                    Наименование по ИКПУ (необязательно)
+                  </label>
+                  <input
+                    id="product-ikpu-name"
+                    type="text"
+                    value={modalIkpuName}
+                    disabled={modalLoading}
+                    onChange={(e) => setModalIkpuName(e.target.value)}
+                    className={INPUT_CLASS}
+                    placeholder="Официальное наименование по классификатору"
+                    aria-label="Наименование по ИКПУ"
+                  />
+                </div>
+              ) : null}
 
               {canUseInvoiceIkpu ? (
                 <div>
@@ -489,6 +599,23 @@ const CompanyProducts = () => {
                   />
                 </div>
               ) : null}
+
+              <div>
+                <label htmlFor="product-sale-price" className={LABEL_CLASS}>
+                  Розничная цена, UZS (необязательно)
+                </label>
+                <input
+                  id="product-sale-price"
+                  type="text"
+                  inputMode="decimal"
+                  value={modalSalePrice}
+                  disabled={modalLoading}
+                  onChange={(e) => setModalSalePrice(e.target.value)}
+                  className={INPUT_CLASS}
+                  placeholder="Для этикетки и POS"
+                  aria-label="Розничная цена в сумах"
+                />
+              </div>
 
               <div>
                 <label htmlFor="product-unit" className={LABEL_CLASS}>
@@ -562,6 +689,15 @@ const CompanyProducts = () => {
             </form>
           </div>
         </div>
+      ) : null}
+
+      {printProduct ? (
+        <ProductLabelPrintModal
+          key={`${printProduct.id}-${labelSettingsVersion}`}
+          product={printProduct}
+          organizationId={organizationId}
+          onClose={() => setPrintProduct(null)}
+        />
       ) : null}
 
       {confirmDeleteId ? (

@@ -11,6 +11,9 @@ const ACTION_LABELS = {
   warehouse_created: "Создан склад",
   warehouse_updated: "Обновлён склад",
   warehouse_deleted: "Удалён склад",
+  user_updated: "Обновлён пользователь",
+  user_deleted: "Удалён пользователь",
+  user_password_reset: "Сброшен пароль пользователя",
 };
 
 const AdminAudit = () => {
