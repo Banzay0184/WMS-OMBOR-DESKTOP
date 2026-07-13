@@ -5,6 +5,7 @@ import { authFetch } from "../../api/client";
 import { getImageUrl } from "../../config";
 import { useOrganizationMemberPermissions } from "../../utils/useOrganizationMemberPermissions";
 import { useOrganizationTariffFeatures } from "../../utils/useOrganizationTariffFeatures";
+import { useModalDismiss } from "../../utils/useModalDismiss";
 
 const rowDisplayName = (row, canUseIkpu) => {
   const our = row?.our_name?.trim() || row?.catalog_name?.trim() || "";
@@ -578,6 +579,9 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
     setDeleteRow(null);
     setDeleteError("");
   };
+
+  const editModalA11y = useModalDismiss(handleCloseEdit, { active: editOpen });
+  const deleteModalA11y = useModalDismiss(handleCloseDelete, { active: Boolean(deleteRow) });
 
   const handleToggleRowSelect = (row) => {
     const k = makeRowKey(row);
@@ -1490,8 +1494,13 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
           role="dialog"
           aria-modal="true"
           aria-labelledby="wh-stock-edit-title"
+          onMouseDown={editModalA11y.onBackdropMouseDown}
         >
-          <div className="w-full max-w-md rounded-xl border border-border bg-white shadow-lg p-5 space-y-4">
+          <div
+            ref={editModalA11y.dialogRef}
+            tabIndex={-1}
+            className="w-full max-w-md rounded-xl border border-border bg-white shadow-lg p-5 space-y-4 focus:outline-none"
+          >
             <h2 id="wh-stock-edit-title" className="text-lg font-semibold text-muted">
               Редактирование кода маркировки
             </h2>
@@ -1543,8 +1552,13 @@ const CompanyWarehouseStock = ({ section = "marked" }) => {
           role="dialog"
           aria-modal="true"
           aria-labelledby="wh-stock-del-title"
+          onMouseDown={deleteModalA11y.onBackdropMouseDown}
         >
-          <div className="w-full max-w-md rounded-xl border border-border bg-white shadow-lg p-5 space-y-4">
+          <div
+            ref={deleteModalA11y.dialogRef}
+            tabIndex={-1}
+            className="w-full max-w-md rounded-xl border border-border bg-white shadow-lg p-5 space-y-4 focus:outline-none"
+          >
             <h2 id="wh-stock-del-title" className="text-lg font-semibold text-muted">
               Удалить единицу учёта?
             </h2>

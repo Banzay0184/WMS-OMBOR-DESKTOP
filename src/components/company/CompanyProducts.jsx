@@ -19,17 +19,44 @@ const buildProductsSubtitle = ({ canUseIkpu, canUseUpc }) => {
 
 const normalizeSearchText = (value) => (value || "").toString().trim().toLowerCase();
 
+/** Для точного сравнения наименования: схлопывает повторяющиеся/крайние пробелы. */
+const normalizeNameForExactMatch = (value) =>
+  (value || "").toString().trim().replace(/\s+/g, " ").toLowerCase();
+
 /** Похоже на отсканированный штрихкод: только цифры, длина как у типичных UPC/EAN. */
 const looksLikeBarcode = (value) => /^\d{6,}$/.test((value || "").trim());
 
-/** Ищет по видимым (в зависимости от тарифа) полям товара. */
-const productMatchesQuery = (product, query, { canUseInvoiceIkpu, canUseUpc }) => {
-  if (!query) return true;
-  const q = normalizeSearchText(query);
-  const haystacks = [product.name, product.unit];
+/** Совпадение по полям, кроме наименования (не зависит от других товаров в списке). */
+const productMatchesNonNameFields = (product, q, { canUseInvoiceIkpu, canUseUpc }) => {
+  const haystacks = [product.unit];
   if (canUseInvoiceIkpu) haystacks.push(product.ikpu_name, product.ikpu_code);
   if (canUseUpc) haystacks.push(product.upc);
   return haystacks.some((v) => normalizeSearchText(v).includes(q));
+};
+
+/**
+ * Двухэтапный поиск по «Наименование» (product.name), объединённый по ИЛИ с остальными
+ * независимыми полями (ед. изм., ИКПУ, UPC):
+ * 1) Точное совпадение (без учёта регистра и лишних пробелов) — если нашёлся хотя бы
+ *    один товар с именем, точно совпадающим с запросом, по имени учитываются ТОЛЬКО
+ *    точные совпадения (частичные — не учитываются).
+ * 2) Иначе — обычное вхождение подстроки, как раньше.
+ * Нужно, чтобы полное точное название одной модели (например, «...GRILL») не «утягивало»
+ * за собой другую модель с тем же префиксом («...GRILL-FAN»).
+ */
+const filterProductsBySearch = (products, query, tariffFlags) => {
+  if (!query) return products;
+  const q = normalizeSearchText(query);
+  const qExact = normalizeNameForExactMatch(query);
+
+  const exactNameMatches = products.filter((p) => normalizeNameForExactMatch(p.name) === qExact);
+  const nameMatchSet = new Set(
+    exactNameMatches.length > 0
+      ? exactNameMatches
+      : products.filter((p) => normalizeSearchText(p.name).includes(q))
+  );
+
+  return products.filter((p) => nameMatchSet.has(p) || productMatchesNonNameFields(p, q, tariffFlags));
 };
 
 const compareValues = (a, b) => {
@@ -140,12 +167,12 @@ const CompanyProducts = () => {
 
   const tariffFlags = { canUseInvoiceIkpu, canUseUpc };
   const filteredProducts = useMemo(
-    () => products.filter((p) => productMatchesQuery(p, searchQuery, tariffFlags)),
+    () => filterProductsBySearch(products, searchQuery, tariffFlags),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [products, searchQuery, canUseInvoiceIkpu, canUseUpc]
   );
   const filteredArchivedProducts = useMemo(
-    () => archivedProducts.filter((p) => productMatchesQuery(p, searchQuery, tariffFlags)),
+    () => filterProductsBySearch(archivedProducts, searchQuery, tariffFlags),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [archivedProducts, searchQuery, canUseInvoiceIkpu, canUseUpc]
   );
