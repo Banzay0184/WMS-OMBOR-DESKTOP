@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Link, useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { authFetch } from "../../api/client";
 import { formatPhoneDisplay, getPhoneDigits, PHONE_PLACEHOLDER } from "../../utils/phone";
+import { useAuth } from "../../context/AuthContext";
 
 const TABS = [
   { id: "main", label: "Основная информация" },
@@ -10,7 +11,17 @@ const TABS = [
   { id: "recovery", label: "Восстановление данных" },
   { id: "activity", label: "Активность" },
   { id: "access", label: "Доступ / блокировка" },
+  { id: "developer", label: "Панель разработчика" },
 ];
+
+const devMoneyFmt = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const formatDevDate = (iso) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("ru-RU", { dateStyle: "medium", timeStyle: "short" });
+};
 
 const COMPANY_STATUS_LABELS = {
   active: "Активна",
@@ -69,6 +80,7 @@ const getEffectiveSubscriptionStatusKey = (sub, now = new Date()) => {
 const AdminCompanySettings = () => {
   const { companyId } = useParams();
   const navigate = useNavigate();
+  const { isSuperAdmin, setActiveContext } = useAuth();
   const [organization, setOrganization] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -117,9 +129,16 @@ const AdminCompanySettings = () => {
   const [archivedInvoices, setArchivedInvoices] = useState([]);
   const [deletedMarkings, setDeletedMarkings] = useState([]);
 
+  const [devInvoiceIdInput, setDevInvoiceIdInput] = useState("");
+  const [devInvoice, setDevInvoice] = useState(null);
+  const [devHistory, setDevHistory] = useState([]);
+  const [devLoading, setDevLoading] = useState(false);
+  const [devError, setDevError] = useState("");
+
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = searchParams.get("tab");
-  const activeTab = TABS.some((t) => t.id === tabFromUrl) ? tabFromUrl : "main";
+  const visibleTabs = TABS.filter((t) => t.id !== "developer" || isSuperAdmin);
+  const activeTab = visibleTabs.some((t) => t.id === tabFromUrl) ? tabFromUrl : "main";
 
   const setActiveTab = (tabId) => {
     const next = new URLSearchParams(searchParams);
@@ -183,6 +202,69 @@ const AdminCompanySettings = () => {
       setMembersLoading(false);
     }
   }, [companyId]);
+
+  const loadDevHistory = useCallback(
+    async (invoiceId) => {
+      if (!companyId || !invoiceId) return;
+      try {
+        const res = await authFetch(
+          `platform/organizations/${companyId}/invoices/${invoiceId}/developer-corrections/history/`
+        );
+        const json = await res.json().catch(() => []);
+        setDevHistory(res.ok && Array.isArray(json) ? json : []);
+      } catch {
+        setDevHistory([]);
+      }
+    },
+    [companyId]
+  );
+
+  const handleDevFind = async (e) => {
+    e.preventDefault();
+    const invId = Number(devInvoiceIdInput);
+    if (!invId) {
+      setDevError("Укажите ID накладной.");
+      return;
+    }
+    setDevLoading(true);
+    setDevError("");
+    setDevInvoice(null);
+    setDevHistory([]);
+    try {
+      const res = await authFetch(`platform/organizations/${companyId}/invoices/${invId}/`);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDevError(json.detail ?? "Счёт-фактура не найдена.");
+        return;
+      }
+      setDevInvoice(json);
+      loadDevHistory(invId);
+    } catch (err) {
+      setDevError(err.message ?? "Ошибка сети");
+    } finally {
+      setDevLoading(false);
+    }
+  };
+
+  const refreshDevInvoice = useCallback(() => {
+    if (!companyId || !devInvoice?.id) return;
+    authFetch(`platform/organizations/${companyId}/invoices/${devInvoice.id}/`)
+      .then((res) => res.json())
+      .then((json) => setDevInvoice(json))
+      .catch(() => {});
+    loadDevHistory(devInvoice.id);
+  }, [companyId, devInvoice?.id, loadDevHistory]);
+
+  const devCorrectionsByLine = useMemo(() => {
+    const map = new Map();
+    for (const c of devHistory) {
+      if (!c.invoice_line_id) continue;
+      const list = map.get(c.invoice_line_id) || [];
+      list.push(c);
+      map.set(c.invoice_line_id, list);
+    }
+    return map;
+  }, [devHistory]);
 
   const loadAudit = useCallback(async () => {
     if (!companyId) return;
@@ -636,7 +718,7 @@ const AdminCompanySettings = () => {
       </div>
 
       <nav className="flex flex-wrap gap-1 border-b border-border" aria-label="Вкладки">
-        {TABS.map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -1360,6 +1442,149 @@ const AdminCompanySettings = () => {
             Удалить компанию
           </button>
         </div>
+      </section>
+      )}
+
+      {activeTab === "developer" && isSuperAdmin && (
+      <section className="bg-white rounded-xl border border-border p-5 sm:p-6 shadow-sm space-y-4">
+        <h2 className="text-lg font-medium text-muted mb-1">Панель разработчика</h2>
+        <p className="text-sm text-muted/75">
+          Добавление недостающих данных в уже утверждённую счёт-фактуру этой компании: новый товар, код
+          маркировки, UPC — без изменения существующих строк, количеств, цен и уже сохранённых кодов маркировки.
+        </p>
+
+        <form onSubmit={handleDevFind} className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs font-medium text-muted/80 mb-1">ID накладной (внутр. №)</label>
+            <input
+              type="number"
+              className="px-3 py-2 rounded-lg border border-border bg-white text-muted text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              value={devInvoiceIdInput}
+              onChange={(e) => setDevInvoiceIdInput(e.target.value)}
+              required
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={devLoading}
+            className="px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover disabled:opacity-50 transition"
+          >
+            {devLoading ? "Поиск…" : "Найти"}
+          </button>
+        </form>
+
+        {devError ? (
+          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2" role="alert">
+            {devError}
+          </p>
+        ) : null}
+
+        {devInvoice ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+              <div>
+                <h3 className="text-base font-semibold text-muted">
+                  Счёт-фактура № {devInvoice.contract_number || `внутр. ${devInvoice.id}`}
+                </h3>
+                <p className="text-sm text-muted/75">
+                  Статус: {devInvoice.status === "approved" ? "Утверждена" : devInvoice.status}
+                </p>
+              </div>
+              {devInvoice.status === "approved" ? (
+                devInvoice.warehouse_id ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveContext("organization", Number(companyId));
+                      const target = `/app/warehouses/${devInvoice.warehouse_id}/receipt?invoice=${devInvoice.id}&dev=1`;
+                      // setTimeout: даём React дорендерить обновлённый activeContext ДО перехода
+                      // на /app — иначе ProtectedRoute успевает увидеть ещё старый контекст
+                      // («Платформа») и редиректит на /select-context.
+                      setTimeout(() => navigate(target), 0);
+                    }}
+                    className="rounded-lg px-4 py-2 text-sm font-medium border border-amber-300 text-amber-900 bg-amber-50 hover:bg-amber-100"
+                  >
+                    Добавить данные в счёт-фактуру
+                  </button>
+                ) : (
+                  <p
+                    className="text-sm text-muted/60"
+                    title="В документе не указан склад — открыть форму накладной нельзя"
+                  >
+                    Нет склада — корректировка недоступна
+                  </p>
+                )
+              ) : (
+                <p className="text-sm text-muted/60">Корректировка доступна только для утверждённых счёт‑фактур.</p>
+              )}
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-border">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs font-semibold text-muted/70 bg-neutral-50/90">
+                    <th className="py-2 px-3">Наименование</th>
+                    <th className="py-2 px-3">ИКПУ</th>
+                    <th className="py-2 px-3">UPC</th>
+                    <th className="py-2 px-3 text-right">Кол-во</th>
+                    <th className="py-2 px-3 text-right">Цена</th>
+                    <th className="py-2 px-3 text-right">Сумма</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(devInvoice.lines || []).map((line) => (
+                    <tr key={line.id} className="border-b border-border/60">
+                      <td className="py-2 px-3">
+                        <span className="block font-medium">{line.our_name || line.ikpu_name || "—"}</span>
+                        {devCorrectionsByLine.has(line.id) ? (
+                          <span
+                            className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-amber-100 text-amber-900"
+                            title={devCorrectionsByLine
+                              .get(line.id)
+                              .map(
+                                (c) =>
+                                  `${c.correction_type_display} · ${formatDevDate(c.created_at)} · ${c.added_by_name || "—"} · ${c.reason}`
+                              )
+                              .join("\n")}
+                          >
+                            Добавлено разработчиком
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="py-2 px-3 font-mono text-xs">{line.ikpu_code || "—"}</td>
+                      <td className="py-2 px-3 font-mono text-xs">{line.upc || "—"}</td>
+                      <td className="py-2 px-3 text-right font-mono tabular-nums">{line.quantity}</td>
+                      <td className="py-2 px-3 text-right font-mono tabular-nums">
+                        {devMoneyFmt.format(Number(line.unit_price ?? 0))}
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono tabular-nums font-medium">
+                        {devMoneyFmt.format(Number(line.amount_without_vat ?? 0))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {devHistory.length > 0 ? (
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted/80 mb-3">
+                  Журнал корректировок разработчика ({devHistory.length})
+                </h3>
+                <div className="space-y-2">
+                  {devHistory.map((c) => (
+                    <div key={c.id} className="text-xs text-muted bg-secondary/40 rounded-lg px-3 py-2">
+                      <p className="font-medium">
+                        {c.correction_type_display} · {formatDevDate(c.created_at)} · {c.added_by_name || "—"}
+                      </p>
+                      <p className="mt-0.5">Причина: {c.reason}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
       )}
 

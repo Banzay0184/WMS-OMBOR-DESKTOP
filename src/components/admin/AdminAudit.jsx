@@ -14,6 +14,9 @@ const ACTION_LABELS = {
   user_updated: "Обновлён пользователь",
   user_deleted: "Удалён пользователь",
   user_password_reset: "Сброшен пароль пользователя",
+  invoice_developer_line_added: "Разработчик добавил строку в счёт-фактуру",
+  invoice_developer_marking_added: "Разработчик добавил код маркировки в счёт-фактуру",
+  invoice_developer_upc_added: "Разработчик добавил UPC в счёт-фактуру",
 };
 
 const AdminAudit = () => {

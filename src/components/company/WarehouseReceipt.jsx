@@ -552,8 +552,17 @@ const WarehouseReceipt = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const editInvoiceId = searchParams.get("invoice");
-  const { activeContext, markForbiddenAppPage } = useAuth();
+  const { activeContext, markForbiddenAppPage, isSuperAdmin, setActiveContext } = useAuth();
   const organizationId = activeContext?.type === "organization" ? activeContext.organizationId : null;
+  /**
+   * «Режим разработчика»: открыть УТВЕРЖДЁННУЮ накладную для добавления недостающих
+   * данных (новая строка / код маркировки существующей строки / UPC существующей
+   * строки без изменения остального) — доступно только is_super_admin. Существующие
+   * строки блокируются от редактирования (см. рендер строк ниже), сохранение идёт
+   * через отдельный endpoint /developer-corrections/, а не обычный PATCH документа.
+   */
+  const isDevCorrection = searchParams.get("dev") === "1" && isSuperAdmin;
+  const [devReason, setDevReason] = useState("");
 
   const warehouseName = useMemo(() => {
     const fromState = location?.state?.warehouseName;
@@ -692,16 +701,23 @@ const WarehouseReceipt = () => {
           if (!cancelled) setEditInvoiceLoadError(inv.detail ?? "Не удалось загрузить документ.");
           return;
         }
-        if (inv.status !== "draft") {
+        if (inv.status !== "draft" && !isDevCorrection) {
           if (!cancelled) {
             setEditInvoiceLoadError("Документ утверждён. Редактирование недоступно.");
           }
           return;
         }
+        if (isDevCorrection && inv.status !== "approved") {
+          if (!cancelled) {
+            setEditInvoiceLoadError("Режим разработчика доступен только для утверждённых счёт‑фактур.");
+          }
+          return;
+        }
         if (inv.warehouse_id != null && String(inv.warehouse_id) !== String(warehouseId)) {
-          navigate(`/app/warehouses/${inv.warehouse_id}/receipt?invoice=${editInvoiceId}`, {
-            replace: true,
-          });
+          navigate(
+            `/app/warehouses/${inv.warehouse_id}/receipt?invoice=${editInvoiceId}${isDevCorrection ? "&dev=1" : ""}`,
+            { replace: true }
+          );
           return;
         }
         if (cancelled) return;
@@ -798,6 +814,12 @@ const WarehouseReceipt = () => {
                 upc: line.upc ?? "",
                 catalogProductId: line.catalog_product_id != null ? line.catalog_product_id : null,
                 markings: resizeMarkingsArray(markingsNormalized, qty),
+                // Только для «режима разработчика»: исходная строка документа — блокируется
+                // от редактирования (кроме доливки количества/маркировок и пустого UPC).
+                isExisting: true,
+                dbLineId: line.id,
+                originalQuantity: qty,
+                originalUpc: (line.upc ?? "").trim(),
               };
             })
           );
@@ -1458,6 +1480,7 @@ const WarehouseReceipt = () => {
         upc: "",
         catalogProductId: null,
         markings: [],
+        isExisting: false,
       },
     ]);
   };
@@ -1679,6 +1702,85 @@ const WarehouseReceipt = () => {
       }
       if (editInvoiceId && editInvoiceLoadError) {
         setInvoiceSaveError(editInvoiceLoadError);
+        return;
+      }
+
+      if (isDevCorrection) {
+        if (!devReason.trim()) {
+          setInvoiceSaveError("Укажите причину корректировки.");
+          return;
+        }
+        const newRows = items.filter((row) => !row.isExisting && !isBlankInvoiceReceiptRow(row));
+        const existingRows = items.filter((row) => row.isExisting);
+
+        for (const row of existingRows) {
+          if ((row.quantity ?? 0) < (row.originalQuantity ?? 0)) {
+            setInvoiceSaveError("Нельзя уменьшать количество в существующей строке.");
+            return;
+          }
+        }
+
+        const requests = [];
+        for (const row of newRows) {
+          requests.push({
+            correction_type: "line_added",
+            reason: devReason.trim(),
+            line: {
+              our_name: row.name ?? "",
+              ikpu_code: row.ikpu ?? "",
+              upc: (row.upc || "").trim(),
+              unit: row.unit ?? "шт",
+              quantity: row.quantity ?? 0,
+              unit_price_doc: row.unitPrice ?? 0,
+              markings: (row.markings || []).map((m) => (m || "").trim()).filter(Boolean),
+            },
+          });
+        }
+        for (const row of existingRows) {
+          const upcNow = (row.upc || "").trim();
+          if (!row.originalUpc && upcNow) {
+            requests.push({
+              correction_type: "upc_added",
+              reason: devReason.trim(),
+              line_id: row.dbLineId,
+              upc: upcNow,
+            });
+          }
+          const filledMarkings = (row.markings || []).map((m) => (m || "").trim()).filter(Boolean);
+          const newMarkings = filledMarkings.slice(row.originalQuantity ?? 0);
+          for (const code of newMarkings) {
+            requests.push({
+              correction_type: "marking_added",
+              reason: devReason.trim(),
+              line_id: row.dbLineId,
+              marking_code: code,
+            });
+          }
+        }
+
+        if (requests.length === 0) {
+          setInvoiceSaveError("Нет новых данных для добавления.");
+          return;
+        }
+
+        for (const body of requests) {
+          const res = await authFetch(
+            `platform/organizations/${organizationId}/invoices/${editInvoiceId}/developer-corrections/`,
+            { method: "POST", body: JSON.stringify(body) }
+          );
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            setInvoiceSaveError(data.detail ?? "Не удалось сохранить корректировку.");
+            return;
+          }
+        }
+
+        setActiveContext("platform");
+        // setTimeout: даём React дорендерить обновлённый activeContext ДО перехода на
+        // /panel — иначе ProtectedRoute успевает увидеть ещё старый контекст
+        // («Организация») и редиректит на /select-context (см. аналогичный фикс в
+        // AdminCompanySettings.jsx при переходе в обратную сторону).
+        setTimeout(() => navigate(`/panel/companies/${organizationId}?tab=developer`, { replace: true }), 0);
         return;
       }
 
@@ -2263,11 +2365,39 @@ const WarehouseReceipt = () => {
               {editInvoiceId
                 ? editInvoiceLoading
                   ? "Загрузка документа…"
-                  : `Редактирование · внутр. № ${editInvoiceId}`
+                  : isDevCorrection
+                    ? `Режим разработчика · внутр. № ${editInvoiceId}`
+                    : `Редактирование · внутр. № ${editInvoiceId}`
                 : "Счёт‑фактура"}
             </h1>
           </div>
         </header>
+
+        {isDevCorrection ? (
+          <div
+            className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 shadow-sm space-y-3"
+            role="status"
+          >
+            <p className="m-0">
+              Режим разработчика: существующие строки заблокированы от редактирования. Разрешено только добавить
+              новую позицию (кнопка «+ Позиция»), заполнить UPC в строке, где он пуст, и увеличить количество
+              (это добавит коды маркировки) в существующей строке.
+            </p>
+            <div>
+              <label htmlFor="dev-correction-reason" className="block text-xs font-medium text-amber-900 mb-1">
+                Причина корректировки (обязательно)
+              </label>
+              <textarea
+                id="dev-correction-reason"
+                className="w-full px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/60"
+                rows={2}
+                value={devReason}
+                onChange={(e) => setDevReason(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+        ) : null}
 
         {canUseCurrency && isForeignCurrency ? (
           <div
@@ -2820,6 +2950,10 @@ const WarehouseReceipt = () => {
             const markings = resizeMarkingsArray(row.markings, qtyInt);
             const filledMark = countFilledMarkings(markings);
             const markingsCollapsed = markingsRowsCollapsed[row.id] === true;
+            // «Режим разработчика»: существующая строка заблокирована от редактирования —
+            // разрешено только увеличивать кол-во (= добавлять коды маркировки) и заполнять
+            // пустой UPC. Настоящая защита — на бэкенде/в handleSaveInvoice (см. выше).
+            const lockedForDev = isDevCorrection && row.isExisting === true;
             return (
               <div
                 key={row.id}
@@ -2874,7 +3008,7 @@ const WarehouseReceipt = () => {
                   <button
                     type="button"
                     onClick={() => handleRemoveItem(row.id)}
-                    disabled={items.length <= 1}
+                    disabled={items.length <= 1 || lockedForDev}
                     className="shrink-0 px-3 py-2 text-sm font-medium text-red-700 border border-red-300/80 bg-white hover:bg-red-50/80 focus:outline-none focus:ring-2 focus:ring-red-200 disabled:opacity-40 disabled:pointer-events-none transition"
                     aria-label="Удалить позицию товара"
                   >
@@ -2908,6 +3042,7 @@ const WarehouseReceipt = () => {
                             setProductPickerRowId(row.id);
                             setProductPickerField("ourName");
                           }}
+                          disabled={lockedForDev}
                           className={DOC_INPUT}
                           placeholder="Например: Холодильник ABC-100"
                           role={organizationId ? "combobox" : undefined}
@@ -2945,6 +3080,7 @@ const WarehouseReceipt = () => {
                                 setProductPickerRowId(row.id);
                                 setProductPickerField("ikpuName");
                               }}
+                              disabled={lockedForDev}
                               className={DOC_INPUT}
                               placeholder="По справочнику или вручную"
                               role={organizationId ? "combobox" : undefined}
@@ -2996,6 +3132,7 @@ const WarehouseReceipt = () => {
                                 setProductPickerRowId(row.id);
                                 setProductPickerField("ikpu");
                               }}
+                              disabled={lockedForDev}
                               className={`${DOC_INPUT} font-mono text-[13px]`}
                               placeholder="17 цифр или пусто"
                               role={organizationId ? "combobox" : undefined}
@@ -3034,6 +3171,7 @@ const WarehouseReceipt = () => {
                             onChange={(e) =>
                               handleItemChange(row.id, { upc: e.target.value, catalogProductId: null })
                             }
+                            disabled={lockedForDev && Boolean(row.originalUpc)}
                             className={`${DOC_INPUT} font-mono text-[13px]`}
                             placeholder="Например: 012345678905"
                             aria-label="UPC товара"
@@ -3729,14 +3867,22 @@ const WarehouseReceipt = () => {
             onClick={() => void handleSaveInvoice()}
             disabled={invoiceSaveLocked}
             className="rounded-lg px-5 py-2.5 text-sm font-semibold bg-primary text-white shadow-sm hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 transition disabled:opacity-60 disabled:pointer-events-none"
-            aria-label={editInvoiceId ? "Сохранить изменения счёт‑фактуры" : "Сохранить счёт‑фактуру"}
+            aria-label={
+              isDevCorrection
+                ? "Сохранить добавленные данные"
+                : editInvoiceId
+                  ? "Сохранить изменения счёт‑фактуры"
+                  : "Сохранить счёт‑фактуру"
+            }
             aria-busy={receiptSaveLoading}
           >
             {receiptSaveLoading
               ? "Сохранение…"
-              : editInvoiceId
-                ? "Сохранить изменения"
-                : "Сохранить"}
+              : isDevCorrection
+                ? "Сохранить добавленные данные"
+                : editInvoiceId
+                  ? "Сохранить изменения"
+                  : "Сохранить"}
           </button>
         </div>
         {(invoiceSaveMessage || invoiceSaveError) ? (

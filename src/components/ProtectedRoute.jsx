@@ -20,8 +20,16 @@ const PosContextRedirect = ({ organizationId, setActiveContext }) => {
  * Без requireContext → только аутентификация (например для /select-context).
  */
 const ProtectedRoute = ({ children, requireContext }) => {
-  const { isAuthenticated, isDeveloper, activeContext, availableContexts, fetchContexts, authReady, setActiveContext } =
-    useAuth();
+  const {
+    isAuthenticated,
+    isDeveloper,
+    isSuperAdmin,
+    activeContext,
+    availableContexts,
+    fetchContexts,
+    authReady,
+    setActiveContext,
+  } = useAuth();
   const [checkingContexts, setCheckingContexts] = useState(false);
 
   /**
@@ -178,28 +186,33 @@ const ProtectedRoute = ({ children, requireContext }) => {
     if (id == null) {
       return <Navigate to="/select-context" replace />;
     }
-    const orgs = availableContexts?.organizations;
-    if (checkingContexts) {
-      return (
-        <div className="min-h-[40vh] flex items-center justify-center text-sm text-muted" role="status">
-          Загрузка…
-        </div>
-      );
-    }
-    if (!Array.isArray(orgs)) {
-      return <Navigate to="/select-context" replace />;
-    }
-    const match = orgs.find((o) => Number(o.id) === Number(id));
-    if (!match) {
-      return <Navigate to="/select-context" replace state={{ reason: "context_unavailable" }} />;
-    }
-    const zones = zonesForOrganization(match);
-    if (!zones.includes("app")) {
-      if (zones.includes("pos")) {
-        return <PosContextRedirect organizationId={id} setActiveContext={setActiveContext} />;
+    if (!isSuperAdmin) {
+      const orgs = availableContexts?.organizations;
+      if (checkingContexts) {
+        return (
+          <div className="min-h-[40vh] flex items-center justify-center text-sm text-muted" role="status">
+            Загрузка…
+          </div>
+        );
       }
-      return <Navigate to="/select-context" replace state={{ reason: "context_unavailable" }} />;
+      if (!Array.isArray(orgs)) {
+        return <Navigate to="/select-context" replace />;
+      }
+      const match = orgs.find((o) => Number(o.id) === Number(id));
+      if (!match) {
+        return <Navigate to="/select-context" replace state={{ reason: "context_unavailable" }} />;
+      }
+      const zones = zonesForOrganization(match);
+      if (!zones.includes("app")) {
+        if (zones.includes("pos")) {
+          return <PosContextRedirect organizationId={id} setActiveContext={setActiveContext} />;
+        }
+        return <Navigate to="/select-context" replace state={{ reason: "context_unavailable" }} />;
+      }
     }
+    // is_super_admin: доступ к /app любой организации по ID, без проверки членства —
+    // нужно «режиму разработчика» (корректировка накладных чужих организаций).
+    // Настоящая защита — на бэкенде (DRF permission classes), это только UX-навигация.
   }
 
   if (requireContext === "pos") {

@@ -99,6 +99,13 @@ export const AuthProvider = ({ children }) => {
     [user]
   );
 
+  /**
+   * is_super_admin с бэкенда (is_superuser ИЛИ активная запись SuperAdmin) — «разработчики /
+   * глобальные админы». Уже, чем isDeveloper выше: используется там, где обычному is_staff
+   * доступа быть не должно (например, «режим разработчика» для корректировки накладных).
+   */
+  const isSuperAdmin = useMemo(() => Boolean(user?.is_super_admin === true), [user]);
+
   const isAuthenticated = useMemo(() => Boolean(user), [user]);
 
   /** Установить активный контекст и сохранить в localStorage. */
@@ -323,7 +330,11 @@ export const AuthProvider = ({ children }) => {
     } else if (activeContext.type === "organization") {
       const id = activeContext.organizationId;
       if (id == null) invalid = true;
-      else if (Array.isArray(availableContexts.organizations)) {
+      else if (isSuperAdmin) {
+        // is_super_admin: доступ к /app любой организации по ID без проверки членства
+        // (см. ProtectedRoute.jsx) — не сбрасываем контекст, даже если организации нет
+        // в списке собственных membership'ов пользователя.
+      } else if (Array.isArray(availableContexts.organizations)) {
         const match = availableContexts.organizations.find((o) => Number(o.id) === Number(id));
         if (!match || !zonesForOrganization(match).includes("app")) invalid = true;
       }
@@ -337,7 +348,7 @@ export const AuthProvider = ({ children }) => {
       }
     }
     if (invalid) clearActiveContext();
-  }, [availableContexts, activeContext, clearActiveContext]);
+  }, [availableContexts, activeContext, clearActiveContext, isSuperAdmin]);
 
   /** Обновить кэш профиля после редактирования (username, phone, image и т.д.). Сохраняет в state и localStorage. */
   const updateUser = useCallback((partial) => {
@@ -375,6 +386,7 @@ export const AuthProvider = ({ children }) => {
       getAccessToken,
       isAuthenticated,
       isDeveloper,
+      isSuperAdmin,
       authReady,
       activeContext,
       setActiveContext,
@@ -395,6 +407,7 @@ export const AuthProvider = ({ children }) => {
       getAccessToken,
       isAuthenticated,
       isDeveloper,
+      isSuperAdmin,
       authReady,
       activeContext,
       setActiveContext,
