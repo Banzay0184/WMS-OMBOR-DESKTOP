@@ -6,6 +6,7 @@ import {
   printProductLabel,
 } from "../../utils/productLabelPrint";
 import { getResolvedProductLabelLayout } from "../../utils/productLabelPrintSettings";
+import { useModalDismiss } from "../../utils/useModalDismiss";
 
 const INPUT_CLASS =
   "w-full px-3 py-2 rounded-lg border border-border bg-white text-muted text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
@@ -73,14 +74,25 @@ const ProductLabelPrintModal = ({ product, organizationId, onClose }) => {
 
   const previewBoxStyle = getProductLabelPreviewBoxStyle(layout);
 
+  const closeModal = useCallback(() => {
+    if (printLoading) return;
+    onClose?.();
+  }, [printLoading, onClose]);
+  const modalA11y = useModalDismiss(closeModal, { active: true });
+
   return (
     <div
       className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="print-label-title"
+      onMouseDown={modalA11y.onBackdropMouseDown}
     >
-      <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-5 sm:p-6 max-h-[92vh] overflow-y-auto">
+      <div
+        ref={modalA11y.dialogRef}
+        tabIndex={-1}
+        className="bg-white rounded-xl shadow-xl max-w-lg w-full p-5 sm:p-6 max-h-[92vh] overflow-y-auto focus:outline-none"
+      >
         <h2 id="print-label-title" className="text-lg font-medium text-muted mb-2">
           Печать этикетки
         </h2>
@@ -162,7 +174,7 @@ const ProductLabelPrintModal = ({ product, organizationId, onClose }) => {
           </button>
           <button
             type="button"
-            onClick={onClose}
+            onClick={closeModal}
             disabled={printLoading}
             className="px-4 py-2.5 border border-border rounded-lg text-muted hover:bg-secondary transition disabled:opacity-50"
           >
