@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { authFetch } from "../../api/client";
 import { useOrganizationTariffFeatures } from "../../utils/useOrganizationTariffFeatures";
+import ProductDetailModal from "./ProductDetailModal";
 
 const moneyFmt = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -34,6 +35,7 @@ const CompanyInvoiceDetail = () => {
   const [approveError, setApproveError] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [detailLine, setDetailLine] = useState(null);
   const {
     canUseUpc,
     canUseInvoiceContract,
@@ -421,7 +423,18 @@ const CompanyInvoiceDetail = () => {
                 return (
                   <tr key={line.id} className="border-b border-border/60">
                     <td className="py-2 px-3 max-w-[14rem]">
-                      <span className="block font-medium">{line.our_name || line.ikpu_name || "—"}</span>
+                      {line.catalog_product_id ? (
+                        <button
+                          type="button"
+                          onClick={() => setDetailLine(line)}
+                          className="block font-medium text-primary hover:underline cursor-pointer text-left"
+                          aria-label={`Подробнее о товаре ${line.our_name || line.ikpu_name || ""}`}
+                        >
+                          {line.our_name || line.ikpu_name || "—"}
+                        </button>
+                      ) : (
+                        <span className="block font-medium">{line.our_name || line.ikpu_name || "—"}</span>
+                      )}
                       {line.ikpu_name && line.our_name ? (
                         <span className="block text-xs text-muted/75 mt-0.5 print-hide-secondary">{line.ikpu_name}</span>
                       ) : null}
@@ -565,6 +578,15 @@ const CompanyInvoiceDetail = () => {
           </div>
         ) : null}
       </div>
+
+      {detailLine ? (
+        <ProductDetailModal
+          line={detailLine}
+          organizationId={organizationId}
+          warehouseId={data.warehouse_id}
+          onClose={() => setDetailLine(null)}
+        />
+      ) : null}
     </div>
   );
 };
