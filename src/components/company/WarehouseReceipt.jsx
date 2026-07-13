@@ -552,7 +552,7 @@ const WarehouseReceipt = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const editInvoiceId = searchParams.get("invoice");
-  const { activeContext, markForbiddenAppPage, isSuperAdmin, setActiveContext } = useAuth();
+  const { activeContext, markForbiddenAppPage, isSuperAdmin } = useAuth();
   const organizationId = activeContext?.type === "organization" ? activeContext.organizationId : null;
   /**
    * «Режим разработчика»: открыть УТВЕРЖДЁННУЮ накладную для добавления недостающих
@@ -1746,8 +1746,10 @@ const WarehouseReceipt = () => {
               upc: upcNow,
             });
           }
-          const filledMarkings = (row.markings || []).map((m) => (m || "").trim()).filter(Boolean);
-          const newMarkings = filledMarkings.slice(row.originalQuantity ?? 0);
+          // Сначала срез по позиции (слоты сверх исходного кол-ва), потом фильтр пустых —
+          // иначе фильтрация до среза сдвигает индексы и «новые» коды теряются.
+          const markingsRaw = (row.markings || []).map((m) => (m || "").trim());
+          const newMarkings = markingsRaw.slice(row.originalQuantity ?? 0).filter(Boolean);
           for (const code of newMarkings) {
             requests.push({
               correction_type: "marking_added",
@@ -1775,12 +1777,10 @@ const WarehouseReceipt = () => {
           }
         }
 
-        setActiveContext("platform");
-        // setTimeout: даём React дорендерить обновлённый activeContext ДО перехода на
-        // /panel — иначе ProtectedRoute успевает увидеть ещё старый контекст
-        // («Организация») и редиректит на /select-context (см. аналогичный фикс в
-        // AdminCompanySettings.jsx при переходе в обратную сторону).
-        setTimeout(() => navigate(`/panel/companies/${organizationId}?tab=developer`, { replace: true }), 0);
+        // Остаёмся в контексте организации (без переключения на «Платформа») и
+        // открываем обычную страницу накладной — так видно результат корректировки
+        // сразу, без гонки состояний при смене контекста между /app и /panel.
+        navigate(`/app/invoices/${editInvoiceId}`, { replace: true });
         return;
       }
 
