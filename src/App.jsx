@@ -32,6 +32,7 @@ import AdminCompanySettings from "./components/admin/AdminCompanySettings";
 import AdminUsers from "./components/admin/AdminUsers";
 import AdminSubscriptions from "./components/admin/AdminSubscriptions";
 import AdminAudit from "./components/admin/AdminAudit";
+import AdminErrorLog from "./components/admin/AdminErrorLog";
 import AdminSettings from "./components/admin/AdminSettings";
 import AdminPosShifts from "./components/admin/AdminPosShifts";
 import POSLayout from "./components/pos/POSLayout";
@@ -126,6 +127,7 @@ function App() {
           <Route path="users" element={<AdminUsers />} />
           <Route path="subscriptions" element={<AdminSubscriptions />} />
           <Route path="audit" element={<AdminAudit />} />
+          <Route path="error-log" element={<AdminErrorLog />} />
           <Route path="settings" element={<AdminSettings />} />
         </Route>
         <Route

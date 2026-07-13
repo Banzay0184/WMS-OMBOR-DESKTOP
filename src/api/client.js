@@ -1,4 +1,5 @@
 import { API_URL } from "../config";
+import { reportApiError } from "../utils/errorReporting";
 
 const STORAGE_ACCESS_KEY = "accessToken";
 const STORAGE_REFRESH_KEY = "refreshToken";
@@ -92,6 +93,25 @@ const isProtectedPath = (path) => {
   if (normalized.startsWith("webauthn/")) return true;
   if (normalized.startsWith("face/")) return true;
   return normalized.startsWith("platform/") || normalized.startsWith("me/");
+};
+
+/**
+ * Обёртка над fetch: сетевые сбои (упал fetch) и HTTP 5xx автоматически уходят в
+ * централизованный журнал ошибок (см. utils/errorReporting.js). Не трогаем 4xx —
+ * это ожидаемые бизнес-ответы (нет прав, не найдено и т.п.), не ошибки для журнала.
+ */
+const fetchWithErrorReporting = async (targetUrl, fetchOptions) => {
+  let response;
+  try {
+    response = await fetch(targetUrl, fetchOptions);
+  } catch (err) {
+    reportApiError(targetUrl, fetchOptions?.method || "GET", null, `Network error: ${err.message}`);
+    throw err;
+  }
+  if (response.status >= 500) {
+    reportApiError(targetUrl, fetchOptions?.method || "GET", response.status);
+  }
+  return response;
 };
 
 /**

@@ -17,6 +17,7 @@ const ACTION_LABELS = {
   invoice_developer_line_added: "Разработчик добавил строку в счёт-фактуру",
   invoice_developer_marking_added: "Разработчик добавил код маркировки в счёт-фактуру",
   invoice_developer_upc_added: "Разработчик добавил UPC в счёт-фактуру",
+  invoice_developer_quantity_decreased: "Разработчик уменьшил количество в счёт-фактуре",
 };
 
 const AdminAudit = () => {

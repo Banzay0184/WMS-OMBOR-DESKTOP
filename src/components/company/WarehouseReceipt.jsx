@@ -820,6 +820,7 @@ const WarehouseReceipt = () => {
                 dbLineId: line.id,
                 originalQuantity: qty,
                 originalUpc: (line.upc ?? "").trim(),
+                originalHasMarkings: markingsNormalized.some((m) => (m || "").trim()),
               };
             })
           );
@@ -1714,8 +1715,17 @@ const WarehouseReceipt = () => {
         const existingRows = items.filter((row) => row.isExisting);
 
         for (const row of existingRows) {
-          if ((row.quantity ?? 0) < (row.originalQuantity ?? 0)) {
-            setInvoiceSaveError("Нельзя уменьшать количество в существующей строке.");
+          const qty = row.quantity ?? 0;
+          const originalQty = row.originalQuantity ?? 0;
+          if (row.originalHasMarkings) {
+            // Товар с маркировкой: количество = числу кодов, меняется только добавлением КМ.
+            if (qty < originalQty) {
+              setInvoiceSaveError("У товара с кодами маркировки количество нельзя уменьшить напрямую.");
+              return;
+            }
+          } else if (qty > originalQty) {
+            // Товар без маркировки: в этом режиме можно только уменьшить (исправить перебор), не увеличить.
+            setInvoiceSaveError("Для товара без маркировки в этом режиме можно только уменьшить количество.");
             return;
           }
         }
@@ -1746,16 +1756,26 @@ const WarehouseReceipt = () => {
               upc: upcNow,
             });
           }
-          // Сначала срез по позиции (слоты сверх исходного кол-ва), потом фильтр пустых —
-          // иначе фильтрация до среза сдвигает индексы и «новые» коды теряются.
-          const markingsRaw = (row.markings || []).map((m) => (m || "").trim());
-          const newMarkings = markingsRaw.slice(row.originalQuantity ?? 0).filter(Boolean);
-          for (const code of newMarkings) {
+
+          if (row.originalHasMarkings) {
+            // Сначала срез по позиции (слоты сверх исходного кол-ва), потом фильтр пустых —
+            // иначе фильтрация до среза сдвигает индексы и «новые» коды теряются.
+            const markingsRaw = (row.markings || []).map((m) => (m || "").trim());
+            const newMarkings = markingsRaw.slice(row.originalQuantity ?? 0).filter(Boolean);
+            for (const code of newMarkings) {
+              requests.push({
+                correction_type: "marking_added",
+                reason: devReason.trim(),
+                line_id: row.dbLineId,
+                marking_code: code,
+              });
+            }
+          } else if ((row.quantity ?? 0) < (row.originalQuantity ?? 0)) {
             requests.push({
-              correction_type: "marking_added",
+              correction_type: "quantity_decreased",
               reason: devReason.trim(),
               line_id: row.dbLineId,
-              marking_code: code,
+              quantity: row.quantity ?? 0,
             });
           }
         }
@@ -2380,8 +2400,9 @@ const WarehouseReceipt = () => {
           >
             <p className="m-0">
               Режим разработчика: существующие строки заблокированы от редактирования. Разрешено только добавить
-              новую позицию (кнопка «+ Позиция»), заполнить UPC в строке, где он пуст, и увеличить количество
-              (это добавит коды маркировки) в существующей строке.
+              новую позицию (кнопка «+ Позиция»), заполнить UPC в строке, где он пуст; для товара с маркировкой —
+              увеличить количество (добавит коды маркировки); для товара без маркировки — уменьшить количество
+              (если остаток на складе позволяет).
             </p>
             <div>
               <label htmlFor="dev-correction-reason" className="block text-xs font-medium text-amber-900 mb-1">

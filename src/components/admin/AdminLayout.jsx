@@ -23,7 +23,7 @@ const getRoleLabel = (user) => {
 
 const AdminLayout = () => {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, isSuperAdmin } = useAuth();
 
   const handleLogout = () => {
     logout();
@@ -131,6 +131,19 @@ const AdminLayout = () => {
           >
             Аудит
           </NavLink>
+          {isSuperAdmin ? (
+            <NavLink
+              to="/panel/error-log"
+              className={({ isActive }) =>
+                "block px-3 py-2.5 rounded-lg transition-colors " +
+                (isActive
+                  ? "bg-primary-hover text-white font-medium"
+                  : "text-white/90 hover:bg-primary-hover")
+              }
+            >
+              Журнал ошибок
+            </NavLink>
+          ) : null}
         </nav>
         <div className="p-2 border-t border-white/20 space-y-0.5">
           <NavLink
