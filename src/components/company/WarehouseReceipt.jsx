@@ -790,6 +790,10 @@ const WarehouseReceipt = () => {
               const markingsNormalized = rawM.map((m) =>
                 typeof m === "string" ? m : String(m ?? "")
               );
+              // Ограничиваем проверку видимыми слотами (0..qty-1) — если в БД массив
+              // markings длиннее quantity (застрявший «хвост» от старого редактирования),
+              // не даём невидимой пользователю ячейке ошибочно пометить строку как маркированную.
+              const visibleMarkings = markingsNormalized.slice(0, qty);
               return {
                 id: `row-${line.id ?? idx + 1}`,
                 name: line.our_name ?? "",
@@ -820,7 +824,8 @@ const WarehouseReceipt = () => {
                 dbLineId: line.id,
                 originalQuantity: qty,
                 originalUpc: (line.upc ?? "").trim(),
-                originalHasMarkings: markingsNormalized.some((m) => (m || "").trim()),
+                originalHasMarkings: visibleMarkings.some((m) => (m || "").trim()),
+                originalFilledMarkingCount: visibleMarkings.filter((m) => (m || "").trim()).length,
               };
             })
           );
@@ -3290,7 +3295,8 @@ const WarehouseReceipt = () => {
                         />
                         {isDevCorrection && row.isExisting && row.originalHasMarkings ? (
                           <p className="text-[11px] text-amber-700 mt-1">
-                            У строки уже есть коды маркировки — ниже {row.originalQuantity} уменьшить нельзя.
+                            У строки заполнено кодов маркировки: {row.originalFilledMarkingCount} из {row.originalQuantity}{" "}
+                            — ниже {row.originalQuantity} уменьшить нельзя.
                           </p>
                         ) : null}
                       </div>
@@ -3394,7 +3400,8 @@ const WarehouseReceipt = () => {
                           />
                           {isDevCorrection && row.isExisting && row.originalHasMarkings ? (
                             <p className="text-[11px] text-amber-700 mt-1">
-                              У строки уже есть коды маркировки — ниже {row.originalQuantity} уменьшить нельзя.
+                              У строки заполнено кодов маркировки: {row.originalFilledMarkingCount} из {row.originalQuantity}{" "}
+                            — ниже {row.originalQuantity} уменьшить нельзя.
                             </p>
                           ) : null}
                         </div>
