@@ -27,6 +27,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from "reac
 import { useAuth } from "../../context/AuthContext";
 import { authFetch } from "../../api/client";
 import { formatPhoneDisplay, getPhoneDigits, PHONE_PLACEHOLDER } from "../../utils/phone";
+import { reportError } from "../../utils/errorReporting";
 
 const INPUT_CLASS =
   "w-full px-4 py-2.5 rounded-lg border border-border bg-white text-muted placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-secondary/40";
@@ -1815,13 +1816,23 @@ const WarehouseReceipt = () => {
           return;
         }
 
+        const correctionUrl = `platform/organizations/${organizationId}/invoices/${editInvoiceId}/developer-corrections/`;
         for (const body of requests) {
-          const res = await authFetch(
-            `platform/organizations/${organizationId}/invoices/${editInvoiceId}/developer-corrections/`,
-            { method: "POST", body: JSON.stringify(body) }
-          );
+          const res = await authFetch(correctionUrl, { method: "POST", body: JSON.stringify(body) });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
+            // Отдельно от общего правила authFetch (там 4xx не логируются, чтобы не шуметь
+            // рутинными отказами валидации): неудачная попытка в Панели разработчика — сигнал,
+            // который сам разработчик, скорее всего, захочет увидеть в Журнале ошибок.
+            reportError({
+              message: data.detail || "Отказ корректировки в режиме разработчика",
+              module: "DeveloperPanel",
+              url: correctionUrl,
+              httpMethod: "POST",
+              httpStatus: res.status,
+              level: "warning",
+              requestPayload: body,
+            });
             setInvoiceSaveError(data.detail ?? "Не удалось сохранить корректировку.");
             return;
           }
