@@ -1511,14 +1511,27 @@ const WarehouseReceipt = () => {
         if (Object.prototype.hasOwnProperty.call(patch, "quantity")) {
           const raw = typeof patch.quantity === "number" ? patch.quantity : Number(patch.quantity);
           const q = Number.isFinite(raw) ? raw : 0;
-          // «Режим разработчика»: у промаркированной существующей строки нельзя уйти НИЖЕ
-          // исходного кол-ва — иначе панель кодов маркировки визуально обрезается до нового
-          // (меньшего) значения и промаркированный товар начинает выглядеть немаркированным.
+          // «Режим разработчика»: нельзя уйти НИЖЕ числа уже привязанных РЕАЛЬНЫХ кодов
+          // маркировки строки (для немаркированной строки это 0) — иначе реальный код
+          // потерялся бы при обрезке слотов.
           const minAllowed =
-            isDevCorrection && it.isExisting && it.originalHasMarkings ? it.originalQuantity ?? 0 : 0;
+            isDevCorrection && it.isExisting ? it.originalFilledMarkingCount ?? 0 : 0;
           const clamped = Math.min(MAX_MARKING_SLOTS, Math.max(minAllowed, q));
           next.quantity = Math.round(clamped * 1000) / 1000;
-          next.markings = canUseMarking ? resizeMarkingsArray(next.markings, next.quantity) : [];
+          if (canUseMarking) {
+            if (isDevCorrection && it.isExisting && next.quantity < (it.originalQuantity ?? 0)) {
+              // Уменьшение существующей строки: сохраняем все реальные коды (независимо от
+              // позиции в исходном массиве), обрезаем/дополняем только пустые слоты —
+              // локальный предпросмотр должен совпадать с тем, что реально сохранит бэкенд.
+              const filled = (next.markings || []).map((m) => (m || "").trim()).filter(Boolean);
+              const blanksNeeded = Math.max(0, next.quantity - filled.length);
+              next.markings = [...filled, ...Array(blanksNeeded).fill("")];
+            } else {
+              next.markings = resizeMarkingsArray(next.markings, next.quantity);
+            }
+          } else {
+            next.markings = [];
+          }
         }
         if (Object.prototype.hasOwnProperty.call(patch, "unitPrice")) {
           const raw = typeof patch.unitPrice === "number" ? patch.unitPrice : Number(patch.unitPrice);
@@ -1727,13 +1740,17 @@ const WarehouseReceipt = () => {
         for (const row of existingRows) {
           const qty = row.quantity ?? 0;
           const originalQty = row.originalQuantity ?? 0;
-          if (row.originalHasMarkings) {
-            // Товар с маркировкой: количество = числу кодов, меняется только добавлением КМ.
-            if (qty < originalQty) {
-              setInvoiceSaveError("У товара с кодами маркировки количество нельзя уменьшить напрямую.");
+          const filledCount = row.originalFilledMarkingCount ?? 0;
+          if (qty < originalQty) {
+            // Уменьшение разрешено до числа уже привязанных РЕАЛЬНЫХ кодов маркировки
+            // (для немаркированной строки это 0) — ниже нельзя, там реальные коды.
+            if (qty < filledCount) {
+              setInvoiceSaveError(
+                `Нельзя уменьшить ниже ${filledCount} — столько кодов маркировки уже привязано к строке «${row.name || row.ikpuName || ""}».`
+              );
               return;
             }
-          } else if (qty > originalQty) {
+          } else if (qty > originalQty && !row.originalHasMarkings) {
             // Товар без маркировки: в этом режиме можно только уменьшить (исправить перебор), не увеличить.
             setInvoiceSaveError("Для товара без маркировки в этом режиме можно только уменьшить количество.");
             return;
@@ -1767,11 +1784,14 @@ const WarehouseReceipt = () => {
             });
           }
 
-          if (row.originalHasMarkings) {
-            // Сначала срез по позиции (слоты сверх исходного кол-ва), потом фильтр пустых —
-            // иначе фильтрация до среза сдвигает индексы и «новые» коды теряются.
+          const qtyNow = row.quantity ?? 0;
+          const originalQty = row.originalQuantity ?? 0;
+          if (qtyNow > originalQty) {
+            // Увеличение (только для строк с маркировкой) — новые заполненные слоты сверх
+            // исходного кол-ва. Сначала срез по позиции, потом фильтр пустых — иначе
+            // фильтрация до среза сдвигает индексы и «новые» коды теряются.
             const markingsRaw = (row.markings || []).map((m) => (m || "").trim());
-            const newMarkings = markingsRaw.slice(row.originalQuantity ?? 0).filter(Boolean);
+            const newMarkings = markingsRaw.slice(originalQty).filter(Boolean);
             for (const code of newMarkings) {
               requests.push({
                 correction_type: "marking_added",
@@ -1780,12 +1800,12 @@ const WarehouseReceipt = () => {
                 marking_code: code,
               });
             }
-          } else if ((row.quantity ?? 0) < (row.originalQuantity ?? 0)) {
+          } else if (qtyNow < originalQty) {
             requests.push({
               correction_type: "quantity_decreased",
               reason: devReason.trim(),
               line_id: row.dbLineId,
-              quantity: row.quantity ?? 0,
+              quantity: qtyNow,
             });
           }
         }
@@ -2410,9 +2430,9 @@ const WarehouseReceipt = () => {
           >
             <p className="m-0">
               Режим разработчика: существующие строки заблокированы от редактирования. Разрешено только добавить
-              новую позицию (кнопка «+ Позиция»), заполнить UPC в строке, где он пуст; для товара с маркировкой —
-              увеличить количество (добавит коды маркировки); для товара без маркировки — уменьшить количество
-              (если остаток на складе позволяет).
+              новую позицию (кнопка «+ Позиция»), заполнить UPC в строке, где он пуст, увеличить количество (добавит
+              коды маркировки), а также уменьшить количество — но не ниже числа уже привязанных к строке кодов
+              маркировки (для товара без кодов — до 0) и только если остаток на складе позволяет.
             </p>
             <div>
               <label htmlFor="dev-correction-reason" className="block text-xs font-medium text-amber-900 mb-1">
@@ -3296,7 +3316,7 @@ const WarehouseReceipt = () => {
                         {isDevCorrection && row.isExisting && row.originalHasMarkings ? (
                           <p className="text-[11px] text-amber-700 mt-1">
                             У строки заполнено кодов маркировки: {row.originalFilledMarkingCount} из {row.originalQuantity}{" "}
-                            — ниже {row.originalQuantity} уменьшить нельзя.
+                            — ниже {row.originalFilledMarkingCount} уменьшить нельзя (столько кодов уже привязано).
                           </p>
                         ) : null}
                       </div>
@@ -3401,7 +3421,7 @@ const WarehouseReceipt = () => {
                           {isDevCorrection && row.isExisting && row.originalHasMarkings ? (
                             <p className="text-[11px] text-amber-700 mt-1">
                               У строки заполнено кодов маркировки: {row.originalFilledMarkingCount} из {row.originalQuantity}{" "}
-                            — ниже {row.originalQuantity} уменьшить нельзя.
+                            — ниже {row.originalFilledMarkingCount} уменьшить нельзя (столько кодов уже привязано).
                             </p>
                           ) : null}
                         </div>
