@@ -1506,7 +1506,12 @@ const WarehouseReceipt = () => {
         if (Object.prototype.hasOwnProperty.call(patch, "quantity")) {
           const raw = typeof patch.quantity === "number" ? patch.quantity : Number(patch.quantity);
           const q = Number.isFinite(raw) ? raw : 0;
-          const clamped = Math.min(MAX_MARKING_SLOTS, Math.max(0, q));
+          // «Режим разработчика»: у промаркированной существующей строки нельзя уйти НИЖЕ
+          // исходного кол-ва — иначе панель кодов маркировки визуально обрезается до нового
+          // (меньшего) значения и промаркированный товар начинает выглядеть немаркированным.
+          const minAllowed =
+            isDevCorrection && it.isExisting && it.originalHasMarkings ? it.originalQuantity ?? 0 : 0;
+          const clamped = Math.min(MAX_MARKING_SLOTS, Math.max(minAllowed, q));
           next.quantity = Math.round(clamped * 1000) / 1000;
           next.markings = canUseMarking ? resizeMarkingsArray(next.markings, next.quantity) : [];
         }
@@ -3283,6 +3288,11 @@ const WarehouseReceipt = () => {
                               : "Количество единиц"
                           }
                         />
+                        {isDevCorrection && row.isExisting && row.originalHasMarkings ? (
+                          <p className="text-[11px] text-amber-700 mt-1">
+                            У строки уже есть коды маркировки — ниже {row.originalQuantity} уменьшить нельзя.
+                          </p>
+                        ) : null}
                       </div>
                       <div>
                         <label htmlFor={`item-price-${row.id}`} className={ITEM_FIELD_LABEL}>
@@ -3382,6 +3392,11 @@ const WarehouseReceipt = () => {
                                 : "Количество единиц"
                             }
                           />
+                          {isDevCorrection && row.isExisting && row.originalHasMarkings ? (
+                            <p className="text-[11px] text-amber-700 mt-1">
+                              У строки уже есть коды маркировки — ниже {row.originalQuantity} уменьшить нельзя.
+                            </p>
+                          ) : null}
                         </div>
                         <div>
                           <label htmlFor={`item-price-${row.id}`} className={ITEM_FIELD_LABEL}>
